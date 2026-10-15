@@ -15,8 +15,6 @@ import android.text.style.RelativeSizeSpan;
 import android.os.Looper;
 import android.util.TypedValue;
 import android.view.Gravity;
-import android.view.HapticFeedbackConstants;
-import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
@@ -107,12 +105,6 @@ public class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private float density;
     private int rowH;
-    // Modo de envio: 0 = leve (sem vibracao/animacao ao enviar), 1 = padrao, 2 = duplo (leve + frame repetido)
-    private static final int MODE_LEVE = 0;
-    private static final int MODE_PADRAO = 1;
-    private static final int MODE_DUPLO = 2;
-    private int sendMode = MODE_LEVE;
-    private TextView modeChip;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -181,7 +173,7 @@ public class MainActivity extends Activity {
         View spacer = new View(this);
         col.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1f));
 
-        TextView foot = text("Desenvolvido por Ruan\n⭕  Projeto Bancada Zero · v1.4", 13, MUTED, false);
+        TextView foot = text("Desenvolvido por Ruan\n⭕  Projeto Bancada Zero · v1.5", 13, MUTED, false);
         foot.setLineSpacing(0, 1.25f);
         foot.setGravity(Gravity.CENTER);
         foot.setLetterSpacing(0.08f);
@@ -325,17 +317,6 @@ public class MainActivity extends Activity {
         back.setOnClickListener(v -> closeRemote());
         head.addView(back);
         head.addView(logoRow(name.toUpperCase(), 13));
-        View hs = new View(this);
-        head.addView(hs, new LinearLayout.LayoutParams(0, 1, 1f));
-        modeChip = text(modeLabel(), 11, Color.WHITE, true);
-        modeChip.setPadding(dp(12), dp(8), dp(12), dp(8));
-        modeChip.setBackground(glassShape(16));
-        modeChip.setOnClickListener(v -> {
-            sendMode = (sendMode + 1) % 3;
-            modeChip.setText(modeLabel());
-            flashStatus("Modo de envio: " + modeLabel().replace("MODO ", ""), GREEN);
-        });
-        head.addView(modeChip);
         col.addView(head);
 
         // Status do emissor IR
@@ -490,18 +471,9 @@ public class MainActivity extends Activity {
         v.setOnClickListener(x -> sendKey(key));
     }
 
+    /** Modo leve: sem vibracao nem animacao ao tocar, para nao atrapalhar o envio do sinal. */
     private void attachPress(View v) {
-        v.setOnTouchListener((view, e) -> {
-            if (sendMode != MODE_PADRAO) return false;
-            int a = e.getActionMasked();
-            if (a == MotionEvent.ACTION_DOWN) {
-                view.animate().scaleX(0.94f).scaleY(0.94f).setDuration(70).start();
-                view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
-            } else if (a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_CANCEL) {
-                view.animate().scaleX(1f).scaleY(1f).setDuration(110).start();
-            }
-            return false;
-        });
+        // intencionalmente vazio
     }
 
     private void sendSequence(final Key[] seq) {
@@ -522,21 +494,11 @@ public class MainActivity extends Activity {
         }
         // Igual ao app antigo: o sinal e enviado em uma thread separada.
         final int[] pat = pattern(key);
-        final int mode = sendMode;
         final String msg = "● Enviado: " + key.label + "  ·  " + key.hex;
-        if (mode == MODE_PADRAO) {
-            flashStatus(msg, GREEN);
-        }
         new Thread(() -> {
             try {
                 irManager.transmit(38000, pat);
-                if (mode == MODE_DUPLO) {
-                    Thread.sleep(45);
-                    irManager.transmit(38000, pat);
-                }
-                if (mode != MODE_PADRAO) {
-                    runOnUiThread(() -> flashStatus(msg, GREEN));
-                }
+                runOnUiThread(() -> flashStatus(msg, GREEN));
             } catch (Exception e) {
                 runOnUiThread(() -> flashStatus("Falha ao enviar o sinal", AMBER));
             }
@@ -558,12 +520,6 @@ public class MainActivity extends Activity {
         return p;
     }
 
-    private String modeLabel() {
-        if (sendMode == MODE_LEVE) return "MODO LEVE";
-        if (sendMode == MODE_PADRAO) return "MODO PADRÃO";
-        return "MODO DUPLO";
-    }
-
     private String statusIdle() {
         return irAvailable ? "● Emissor IR pronto · 38 kHz" : "● Sem emissor IR neste celular";
     }
@@ -572,8 +528,6 @@ public class MainActivity extends Activity {
         if (statusText == null) return;
         statusText.setText(msg);
         statusText.setTextColor(color);
-        statusText.setAlpha(0.4f);
-        statusText.animate().alpha(1f).setDuration(180).start();
         handler.removeCallbacks(resetStatus);
         handler.postDelayed(resetStatus, 2200);
     }
