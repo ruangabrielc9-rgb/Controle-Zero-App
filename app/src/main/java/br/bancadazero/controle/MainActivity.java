@@ -7,7 +7,11 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.hardware.ConsumerIrManager;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
+import android.os.VibratorManager;
 import android.os.Handler;
 import android.text.SpannableString;
 import android.text.Spanned;
@@ -15,7 +19,6 @@ import android.text.style.RelativeSizeSpan;
 import android.os.Looper;
 import android.util.TypedValue;
 import android.view.Gravity;
-import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -175,7 +178,7 @@ public class MainActivity extends Activity {
         View spacer = new View(this);
         col.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1f));
 
-        TextView foot = text("Desenvolvido por Ruan\n⭕  Projeto Bancada Zero · v1.6", 13, MUTED, false);
+        TextView foot = text("Desenvolvido por Ruan\n⭕  Projeto Bancada Zero · v1.7", 13, MUTED, false);
         foot.setLineSpacing(0, 1.25f);
         foot.setGravity(Gravity.CENTER);
         foot.setLetterSpacing(0.08f);
@@ -449,7 +452,6 @@ public class MainActivity extends Activity {
         d.setStroke(dp(1), RED);
         t.setBackground(d);
         t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
-        t.setOnTouchListener(null); // modo leve: sem vibracao/animacao nas sequencias
         t.setOnClickListener(v -> {
             Key[] seq = new Key[code.length()];
             for (int i = 0; i < code.length(); i++) {
@@ -464,7 +466,7 @@ public class MainActivity extends Activity {
         TextView t = text("Sequência de serviço\nMute · 1 · 8 · 2 · Power", 12.5f, Color.WHITE, false);
         t.setGravity(Gravity.CENTER);
         t.setBackground(glassShape(33));
-        t.setOnClickListener(v -> sendSequence(seq)); // modo leve: sem vibracao/animacao
+        t.setOnClickListener(v -> sendSequence(seq));
         return t;
     }
 
@@ -479,7 +481,6 @@ public class MainActivity extends Activity {
             int a = e.getActionMasked();
             if (a == MotionEvent.ACTION_DOWN) {
                 view.animate().scaleX(0.94f).scaleY(0.94f).setDuration(70).start();
-                view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
             } else if (a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_CANCEL) {
                 view.animate().scaleX(1f).scaleY(1f).setDuration(110).start();
             }
@@ -503,7 +504,8 @@ public class MainActivity extends Activity {
             }
             return;
         }
-        // Igual ao app antigo: o sinal e enviado em uma thread separada.
+        // Igual ao app antigo: vibra 50 ms (Vibrator) e envia o sinal em uma thread separada.
+        vibrate50();
         final int[] pat = pattern(key);
         final String msg = "● Enviado: " + key.label + "  ·  " + key.hex;
         new Thread(() -> {
@@ -514,6 +516,27 @@ public class MainActivity extends Activity {
                 runOnUiThread(() -> flashStatus("Falha ao enviar o sinal", AMBER));
             }
         }).start();
+    }
+
+    private Vibrator vibrator;
+
+    private void vibrate50() {
+        try {
+            if (vibrator == null) {
+                if (Build.VERSION.SDK_INT >= 31) {
+                    VibratorManager vm = (VibratorManager) getSystemService(Context.VIBRATOR_MANAGER_SERVICE);
+                    vibrator = vm.getDefaultVibrator();
+                } else {
+                    vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+                }
+            }
+            if (Build.VERSION.SDK_INT >= 26) {
+                vibrator.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE));
+            } else {
+                vibrator.vibrate(50);
+            }
+        } catch (Exception ignored) {
+        }
     }
 
     /** Monta o padrao de pulsos (microssegundos) a partir do codigo de 32 bits. */
