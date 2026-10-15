@@ -15,6 +15,8 @@ import android.text.style.RelativeSizeSpan;
 import android.os.Looper;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.HapticFeedbackConstants;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
@@ -173,7 +175,7 @@ public class MainActivity extends Activity {
         View spacer = new View(this);
         col.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1f));
 
-        TextView foot = text("Desenvolvido por Ruan\n⭕  Projeto Bancada Zero · v1.5", 13, MUTED, false);
+        TextView foot = text("Desenvolvido por Ruan\n⭕  Projeto Bancada Zero · v1.6", 13, MUTED, false);
         foot.setLineSpacing(0, 1.25f);
         foot.setGravity(Gravity.CENTER);
         foot.setLetterSpacing(0.08f);
@@ -447,6 +449,7 @@ public class MainActivity extends Activity {
         d.setStroke(dp(1), RED);
         t.setBackground(d);
         t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        t.setOnTouchListener(null); // modo leve: sem vibracao/animacao nas sequencias
         t.setOnClickListener(v -> {
             Key[] seq = new Key[code.length()];
             for (int i = 0; i < code.length(); i++) {
@@ -461,8 +464,7 @@ public class MainActivity extends Activity {
         TextView t = text("Sequência de serviço\nMute · 1 · 8 · 2 · Power", 12.5f, Color.WHITE, false);
         t.setGravity(Gravity.CENTER);
         t.setBackground(glassShape(33));
-        attachPress(t);
-        t.setOnClickListener(v -> sendSequence(seq));
+        t.setOnClickListener(v -> sendSequence(seq)); // modo leve: sem vibracao/animacao
         return t;
     }
 
@@ -471,9 +473,18 @@ public class MainActivity extends Activity {
         v.setOnClickListener(x -> sendKey(key));
     }
 
-    /** Modo leve: sem vibracao nem animacao ao tocar, para nao atrapalhar o envio do sinal. */
+    /** Animacao de toque + vibracao leve (botoes normais). */
     private void attachPress(View v) {
-        // intencionalmente vazio
+        v.setOnTouchListener((view, e) -> {
+            int a = e.getActionMasked();
+            if (a == MotionEvent.ACTION_DOWN) {
+                view.animate().scaleX(0.94f).scaleY(0.94f).setDuration(70).start();
+                view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+            } else if (a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_CANCEL) {
+                view.animate().scaleX(1f).scaleY(1f).setDuration(110).start();
+            }
+            return false;
+        });
     }
 
     private void sendSequence(final Key[] seq) {
