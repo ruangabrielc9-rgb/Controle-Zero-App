@@ -9,6 +9,9 @@ import android.graphics.drawable.GradientDrawable;
 import android.hardware.ConsumerIrManager;
 import android.os.Bundle;
 import android.os.Handler;
+import android.text.SpannableString;
+import android.text.Spanned;
+import android.text.style.RelativeSizeSpan;
 import android.os.Looper;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -172,7 +175,7 @@ public class MainActivity extends Activity {
         View spacer = new View(this);
         col.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1f));
 
-        TextView foot = text("Desenvolvido por Ruan\n⭕  Projeto Bancada Zero · v1.1", 13, MUTED, false);
+        TextView foot = text("Desenvolvido por Ruan\n⭕  Projeto Bancada Zero · v1.2", 13, MUTED, false);
         foot.setLineSpacing(0, 1.25f);
         foot.setGravity(Gravity.CENTER);
         foot.setLetterSpacing(0.08f);
@@ -368,7 +371,11 @@ public class MainActivity extends Activity {
     // ----- Grade unica LG -----
     private LinearLayout lgGrid() {
         LinearLayout c = vbox();
-        c.addView(row(btn("POWER", 1, L_POWER), btn("IN-START", 2, L_INSTART), btn("EZ-ADJUST", 2, L_EZADJUST)));
+        TextView ez = btn("EZ-ADJUST", 2, L_EZADJUST);
+        SpannableString ezText = new SpannableString("EZ-ADJUST\n(ADJ)");
+        ezText.setSpan(new RelativeSizeSpan(0.7f), 10, ezText.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        ez.setText(ezText);
+        c.addView(row(btn("POWER", 1, L_POWER), btn("IN-START", 2, L_INSTART), ez));
         c.addView(row(btn("MUTE", 0, L_MUTE), btn("MENU", 0, L_MENU), btn("VOLTAR", 0, L_BACK)));
         addNumbers(c, L_NUM, L_BACK, L_OK);
         c.addView(row(blank(), btn("▲", 0, L_UP), blank()));
