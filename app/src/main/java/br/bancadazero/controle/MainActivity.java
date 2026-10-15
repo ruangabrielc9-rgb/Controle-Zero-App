@@ -172,7 +172,8 @@ public class MainActivity extends Activity {
         View spacer = new View(this);
         col.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1f));
 
-        TextView foot = text("⭕  Comunidade Bancada Zero · v1.0", 13, MUTED, false);
+        TextView foot = text("Desenvolvido por Ruan\n⭕  Projeto Bancada Zero · v1.1", 13, MUTED, false);
+        foot.setLineSpacing(0, 1.25f);
         foot.setGravity(Gravity.CENTER);
         foot.setLetterSpacing(0.08f);
         LinearLayout.LayoutParams flp = lp(-1, -2);
@@ -327,7 +328,8 @@ public class MainActivity extends Activity {
 
         // Altura de cada linha: preenche a tela (9 linhas de botoes)
         int totalH = stage.getHeight() > 0 ? stage.getHeight() : dp(720);
-        int h = (totalH - dp(250)) / 9 - dp(10);
+        int rows = isSam ? 10 : 9;
+        int h = (totalH - (isSam ? dp(290) : dp(250))) / rows - dp(10);
         rowH = Math.max(dp(46), Math.min(dp(70), h));
 
         LinearLayout grid = isSam ? samsungGrid() : lgGrid();
@@ -336,7 +338,7 @@ public class MainActivity extends Activity {
         col.addView(grid, gl);
 
         String note = isSam
-                ? "A sequência Mute·1·8·2·Power varia por modelo. Teste antes de usar com cliente."
+                ? "Códigos 0000 · 0028 · 0038 · 0098: use dentro do menu de serviço, no item Advanced. A sequência Mute·1·8·2·Power varia por modelo; teste antes de usar com cliente."
                 : "LG: In-Start e Ez-Adjust de tabela pública; navegação e números ainda a testar em TV real.";
         TextView nt = text(note, 11.5f, AMBER, false);
         nt.setLineSpacing(0, 1.1f);
@@ -355,6 +357,7 @@ public class MainActivity extends Activity {
                 S_MUTE, S_NUM[1], S_NUM[8], S_NUM[2], S_POWER}));
         ((LinearLayout.LayoutParams) r2.getChildAt(1).getLayoutParams()).weight = 2f;
         c.addView(r2);
+        c.addView(row(codeBtn("0000"), codeBtn("0028"), codeBtn("0038"), codeBtn("0098")));
         addNumbers(c, S_NUM, S_RETURN, S_OK);
         c.addView(row(btn("RETURN", 0, S_RETURN), btn("▲", 0, S_UP), btn("EXIT", 0, S_EXIT)));
         c.addView(row(btn("◀", 0, S_LEFT), btn("OK", 1, S_OK), btn("▶", 0, S_RIGHT)));
@@ -427,6 +430,25 @@ public class MainActivity extends Activity {
         }
         t.setBackground(d);
         bindKey(t, key);
+        return t;
+    }
+
+    /** Atalho de codigo de 4 digitos: envia um digito de cada vez, em sequencia. */
+    private View codeBtn(final String code) {
+        TextView t = btn(code, 0, S_NUM[0]);
+        GradientDrawable d = new GradientDrawable();
+        d.setCornerRadius(dp(33));
+        d.setColor(GLASS);
+        d.setStroke(dp(1), RED);
+        t.setBackground(d);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        t.setOnClickListener(v -> {
+            Key[] seq = new Key[code.length()];
+            for (int i = 0; i < code.length(); i++) {
+                seq[i] = S_NUM[code.charAt(i) - '0'];
+            }
+            sendSequence(seq);
+        });
         return t;
     }
 
