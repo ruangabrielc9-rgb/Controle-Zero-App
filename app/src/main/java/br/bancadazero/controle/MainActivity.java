@@ -1,0 +1,670 @@
+package br.bancadazero.controle;
+
+import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.Context;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.hardware.ConsumerIrManager;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.util.TypedValue;
+import android.view.Gravity;
+import android.view.HapticFeedbackConstants;
+import android.view.MotionEvent;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
+
+/**
+ * Bancada Zero - Controle de servico (IR).
+ * Tela inicial para escolher a marca e tela de controle com abas.
+ */
+public class MainActivity extends Activity {
+
+    // ===== Cores do tema =====
+    static final int BG = 0xFF0D0D0F;
+    static final int RED = 0xFFE10600;
+    static final int RED_DARK = 0xFF7A0300;
+    static final int GLASS = 0x14FFFFFF;
+    static final int GLASS_BORDER = 0x22FFFFFF;
+    static final int MUTED = 0xFF9B9BA3;
+    static final int GREEN = 0xFF2BFF88;
+    static final int AMBER = 0xFFFFB347;
+
+    enum Proto { SAMSUNG, NEC }
+
+    /** Uma tecla: nome, codigo hexadecimal de 32 bits e protocolo. */
+    static class Key {
+        final String label;
+        final String hex;
+        final Proto proto;
+        Key(String label, String hex, Proto proto) {
+            this.label = label;
+            this.hex = hex;
+            this.proto = proto;
+        }
+    }
+
+    // ===== Codigos Samsung (Samsung32, 38 kHz) =====
+    static Key sam(String l, String h) { return new Key(l, h, Proto.SAMSUNG); }
+    static final Key S_POWER = sam("POWER", "E0E040BF");
+    static final Key S_MUTE = sam("MUTE", "E0E0F00F");
+    static final Key S_INFO = sam("INFO", "E0E0F807");
+    static final Key S_FACTORY = sam("FACTORY", "E0E0DC23");
+    static final Key S_MENU = sam("MENU", "E0E058A7");
+    static final Key S_SOURCE = sam("SOURCE", "E0E0807F");
+    static final Key S_UP = sam("CIMA", "E0E006F9");
+    static final Key S_DOWN = sam("BAIXO", "E0E08679");
+    static final Key S_LEFT = sam("ESQUERDA", "E0E0A659");
+    static final Key S_RIGHT = sam("DIREITA", "E0E046B9");
+    static final Key S_OK = sam("OK", "E0E016E9");
+    static final Key S_RETURN = sam("RETURN", "E0E01AE5");
+    static final Key S_EXIT = sam("EXIT", "E0E0B44B");
+    static final Key[] S_NUM = {
+            sam("0", "E0E08877"), sam("1", "E0E020DF"), sam("2", "E0E0A05F"),
+            sam("3", "E0E0609F"), sam("4", "E0E010EF"), sam("5", "E0E0906F"),
+            sam("6", "E0E050AF"), sam("7", "E0E030CF"), sam("8", "E0E0B04F"),
+            sam("9", "E0E0708F")
+    };
+
+    // ===== Codigos LG (NEC, 38 kHz) =====
+    static Key lg(String l, String h) { return new Key(l, h, Proto.NEC); }
+    static final Key L_POWER = lg("POWER", "20DF10EF");
+    static final Key L_MUTE = lg("MUTE", "20DF906F");
+    static final Key L_INSTART = lg("IN-START", "20DFDF20");
+    static final Key L_EZADJUST = lg("EZ-ADJUST", "20DFFF00");
+    static final Key L_MENU = lg("MENU", "20DFC23D");
+    static final Key L_UP = lg("CIMA", "20DF02FD");
+    static final Key L_DOWN = lg("BAIXO", "20DF827D");
+    static final Key L_LEFT = lg("ESQUERDA", "20DFE01F");
+    static final Key L_RIGHT = lg("DIREITA", "20DF609F");
+    static final Key L_OK = lg("OK", "20DF22DD");
+    static final Key L_BACK = lg("VOLTAR", "20DF14EB");
+    static final Key[] L_NUM = {
+            lg("0", "20DF08F7"), lg("1", "20DF8877"), lg("2", "20DF48B7"),
+            lg("3", "20DFC837"), lg("4", "20DF28D7"), lg("5", "20DFA857"),
+            lg("6", "20DF6897"), lg("7", "20DFE817"), lg("8", "20DF18E7"),
+            lg("9", "20DF9867")
+    };
+
+    // ===== Estado =====
+    private FrameLayout stage;
+    private View homeView;
+    private View remoteView;
+    private TextView statusText;
+    private ConsumerIrManager irManager;
+    private boolean irAvailable = false;
+    private boolean warnedNoIr = false;
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private float density;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        density = getResources().getDisplayMetrics().density;
+
+        try {
+            irManager = (ConsumerIrManager) getSystemService(Context.CONSUMER_IR_SERVICE);
+            irAvailable = irManager != null && irManager.hasIrEmitter();
+        } catch (Exception e) {
+            irAvailable = false;
+        }
+
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(BG);
+
+        View glow = new View(this);
+        GradientDrawable g = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{0xFF3A0805, 0x000D0D0F});
+        glow.setBackground(g);
+        root.addView(glow, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(340)));
+
+        stage = new FrameLayout(this);
+        root.addView(stage, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        setContentView(root);
+
+        homeView = buildHome();
+        stage.addView(homeView);
+        animateHomeIn();
+    }
+
+    // =========================================================
+    // Tela inicial
+    // =========================================================
+    private View buildHome() {
+        ScrollView sv = new ScrollView(this);
+        sv.setFillViewport(true);
+        sv.setVerticalScrollBarEnabled(false);
+
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding(dp(22), dp(44), dp(22), dp(24));
+        sv.addView(col, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        col.addView(logoRow("BANCADA ZERO", 14));
+
+        TextView title = text("Qual TV você vai atender?", 32, Color.WHITE, true);
+        title.setLineSpacing(0, 1.05f);
+        LinearLayout.LayoutParams tlp = lp(-1, -2);
+        tlp.topMargin = dp(30);
+        col.addView(title, tlp);
+
+        TextView sub = text("Toque na marca para abrir o controle de serviço.", 15, MUTED, false);
+        LinearLayout.LayoutParams slp = lp(-1, -2);
+        slp.topMargin = dp(8);
+        slp.bottomMargin = dp(24);
+        col.addView(sub, slp);
+
+        col.addView(brandCardRed("Samsung", "Info + Factory · menu de serviço", "Disponível"), cardLp());
+        col.addView(brandCardGlass("LG", "In-Start · Ez-Adjust", "Disponível", true), cardLp());
+        col.addView(brandCardGlass("Sony", "Códigos de serviço", "Em breve", false), cardLp());
+        col.addView(brandCardGlass("TCL · Philco", "Códigos de serviço", "Em breve", false), cardLp());
+
+        View spacer = new View(this);
+        col.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1f));
+
+        TextView foot = text("⭕  Comunidade Bancada Zero · v1.0", 13, MUTED, false);
+        foot.setGravity(Gravity.CENTER);
+        foot.setLetterSpacing(0.08f);
+        LinearLayout.LayoutParams flp = lp(-1, -2);
+        flp.topMargin = dp(18);
+        col.addView(foot, flp);
+
+        return sv;
+    }
+
+    private LinearLayout.LayoutParams cardLp() {
+        LinearLayout.LayoutParams l = lp(-1, dp(104));
+        l.bottomMargin = dp(14);
+        return l;
+    }
+
+    private View brandCardRed(final String name, String desc, String tag) {
+        LinearLayout card = baseCard(name, desc, tag, true);
+        GradientDrawable d = new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{RED, RED_DARK});
+        d.setCornerRadius(dp(26));
+        card.setBackground(d);
+        attachPress(card);
+        card.setOnClickListener(v -> openBrand(name));
+        return card;
+    }
+
+    private View brandCardGlass(final String name, String desc, String tag, boolean enabled) {
+        LinearLayout card = baseCard(name, desc, tag, false);
+        card.setBackground(glassShape(26));
+        if (enabled) {
+            attachPress(card);
+            card.setOnClickListener(v -> openBrand(name));
+        } else {
+            card.setAlpha(0.5f);
+        }
+        return card;
+    }
+
+    private LinearLayout baseCard(String name, String desc, String tag, boolean red) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(22), dp(16), dp(22), dp(16));
+        card.setGravity(Gravity.CENTER_VERTICAL);
+
+        LinearLayout top = new LinearLayout(this);
+        top.setOrientation(LinearLayout.HORIZONTAL);
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        TextView n = text(name, 26, Color.WHITE, true);
+        top.addView(n, new LinearLayout.LayoutParams(0, -2, 1f));
+        TextView t = text(tag, 13, red ? 0xFFFFD9D6 : MUTED, false);
+        top.addView(t);
+        card.addView(top);
+
+        TextView d = text(desc, 14, red ? 0xFFFFD9D6 : MUTED, false);
+        LinearLayout.LayoutParams dl = lp(-1, -2);
+        dl.topMargin = dp(6);
+        card.addView(d, dl);
+        return card;
+    }
+
+    private void animateHomeIn() {
+        if (!(homeView instanceof ScrollView)) return;
+        ViewGroup col = (ViewGroup) ((ScrollView) homeView).getChildAt(0);
+        for (int i = 0; i < col.getChildCount(); i++) {
+            View c = col.getChildAt(i);
+            float target = c.getAlpha();
+            c.setAlpha(0f);
+            c.setTranslationY(dp(22));
+            c.animate().alpha(target).translationY(0).setStartDelay(60L * i).setDuration(320).start();
+        }
+    }
+
+    // =========================================================
+    // Tela do controle
+    // =========================================================
+    private void openBrand(String name) {
+        if (remoteView != null) return;
+        final boolean isSam = name.equals("Samsung");
+        remoteView = buildRemote(name, isSam);
+        stage.addView(remoteView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        final int w = stage.getWidth() > 0 ? stage.getWidth() : dp(360);
+        remoteView.setTranslationX(w);
+        remoteView.animate().translationX(0).setDuration(280).start();
+        homeView.animate().translationX(-w / 5f).alpha(0.4f).setDuration(280).start();
+
+        if (!irAvailable && !warnedNoIr) {
+            warnedNoIr = true;
+            handler.postDelayed(this::showNoIrDialog, 350);
+        }
+    }
+
+    private void closeRemote() {
+        if (remoteView == null) return;
+        final View rv = remoteView;
+        remoteView = null;
+        final int w = stage.getWidth() > 0 ? stage.getWidth() : dp(360);
+        rv.animate().translationX(w).setDuration(250).withEndAction(() -> stage.removeView(rv)).start();
+        homeView.animate().translationX(0).alpha(1f).setDuration(250).start();
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (remoteView != null) {
+            closeRemote();
+        } else {
+            super.onBackPressed();
+        }
+    }
+
+    private View buildRemote(String name, final boolean isSam) {
+        FrameLayout wrap = new FrameLayout(this);
+        wrap.setBackgroundColor(BG);
+        wrap.setClickable(true);
+
+        View glow = new View(this);
+        glow.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{0xFF3A0805, 0x000D0D0F}));
+        wrap.addView(glow, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(300)));
+
+        ScrollView sv = new ScrollView(this);
+        sv.setVerticalScrollBarEnabled(false);
+        wrap.addView(sv, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding(dp(18), dp(40), dp(18), dp(28));
+        sv.addView(col, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        // Cabecalho
+        LinearLayout head = new LinearLayout(this);
+        head.setOrientation(LinearLayout.HORIZONTAL);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        TextView back = text("‹", 40, Color.WHITE, false);
+        back.setPadding(dp(6), 0, dp(16), dp(4));
+        attachPress(back);
+        back.setOnClickListener(v -> closeRemote());
+        head.addView(back);
+        head.addView(logoRow(name.toUpperCase(), 13));
+        col.addView(head);
+
+        // Status do emissor IR
+        statusText = text(statusIdle(), 14, irAvailable ? GREEN : AMBER, false);
+        statusText.setPadding(dp(16), dp(10), dp(16), dp(10));
+        statusText.setBackground(glassShape(20));
+        LinearLayout.LayoutParams stl = lp(-1, -2);
+        stl.topMargin = dp(18);
+        col.addView(statusText, stl);
+
+        // Abas
+        final LinearLayout seg = new LinearLayout(this);
+        seg.setOrientation(LinearLayout.HORIZONTAL);
+        seg.setPadding(dp(5), dp(5), dp(5), dp(5));
+        seg.setBackground(glassShape(22));
+        LinearLayout.LayoutParams sgl = lp(-1, -2);
+        sgl.topMargin = dp(14);
+        sgl.bottomMargin = dp(18);
+        col.addView(seg, sgl);
+
+        final FrameLayout content = new FrameLayout(this);
+        col.addView(content, lp(-1, -2));
+
+        final String[] names = {"Serviço", "Navegação", "Números"};
+        final TextView[] tabs = new TextView[3];
+        for (int i = 0; i < 3; i++) {
+            final int idx = i;
+            TextView t = text(names[i], 15, MUTED, false);
+            t.setGravity(Gravity.CENTER);
+            t.setPadding(0, dp(12), 0, dp(12));
+            seg.addView(t, new LinearLayout.LayoutParams(0, -2, 1f));
+            tabs[i] = t;
+            t.setOnClickListener(v -> selectTab(isSam, idx, tabs, content));
+        }
+        selectTab(isSam, 0, tabs, content);
+
+        // Aviso
+        String note = isSam
+                ? "A sequência Mute·1·8·2·Power é a mais usada para o menu de serviço, mas varia por modelo. Teste antes de usar com cliente."
+                : "In-Start e Ez-Adjust vêm de tabela pública de um modelo. Navegação e números da LG ainda precisam de teste em TV real.";
+        TextView nt = text(note, 12.5f, AMBER, false);
+        nt.setLineSpacing(0, 1.1f);
+        LinearLayout.LayoutParams nl = lp(-1, -2);
+        nl.topMargin = dp(22);
+        col.addView(nt, nl);
+
+        return wrap;
+    }
+
+    private void selectTab(boolean isSam, int idx, TextView[] tabs, FrameLayout content) {
+        for (int i = 0; i < tabs.length; i++) {
+            boolean on = i == idx;
+            tabs[i].setTextColor(on ? Color.WHITE : MUTED);
+            tabs[i].setTypeface(null, on ? Typeface.BOLD : Typeface.NORMAL);
+            if (on) {
+                GradientDrawable d = new GradientDrawable();
+                d.setColor(RED);
+                d.setCornerRadius(dp(17));
+                tabs[i].setBackground(d);
+            } else {
+                tabs[i].setBackground(null);
+            }
+        }
+        content.removeAllViews();
+        View v = isSam ? samsungTab(idx) : lgTab(idx);
+        content.addView(v);
+        v.setAlpha(0f);
+        v.setTranslationY(dp(10));
+        v.animate().alpha(1f).translationY(0).setDuration(200).start();
+    }
+
+    // ----- Abas Samsung -----
+    private View samsungTab(int idx) {
+        if (idx == 0) {
+            LinearLayout c = vbox();
+            c.addView(row(btn("POWER", 1, S_POWER), btn("INFO", 0, S_INFO), btn("FACTORY", 2, S_FACTORY)));
+            c.addView(row(btn("MUTE", 0, S_MUTE), btn("MENU", 0, S_MENU), btn("SOURCE", 0, S_SOURCE)));
+            c.addView(wideBtn("Sequência de serviço  ·  Mute 1 8 2 Power", new Key[]{
+                    S_MUTE, S_NUM[1], S_NUM[8], S_NUM[2], S_POWER}));
+            return c;
+        } else if (idx == 1) {
+            LinearLayout c = vbox();
+            c.addView(dpad(S_UP, S_DOWN, S_LEFT, S_RIGHT, S_OK));
+            c.addView(row(btn("RETURN", 0, S_RETURN), btn("EXIT", 0, S_EXIT), btn("MENU", 0, S_MENU)));
+            return c;
+        } else {
+            return numbers(S_NUM, S_RETURN, S_OK);
+        }
+    }
+
+    // ----- Abas LG -----
+    private View lgTab(int idx) {
+        if (idx == 0) {
+            LinearLayout c = vbox();
+            c.addView(row(btn("POWER", 1, L_POWER), btn("MUTE", 0, L_MUTE)));
+            c.addView(row(btn("IN-START", 2, L_INSTART), btn("EZ-ADJUST", 2, L_EZADJUST)));
+            c.addView(row(btn("MENU", 0, L_MENU)));
+            return c;
+        } else if (idx == 1) {
+            LinearLayout c = vbox();
+            c.addView(dpad(L_UP, L_DOWN, L_LEFT, L_RIGHT, L_OK));
+            c.addView(row(btn("VOLTAR", 0, L_BACK), btn("MENU", 0, L_MENU)));
+            return c;
+        } else {
+            return numbers(L_NUM, L_BACK, L_OK);
+        }
+    }
+
+    private View numbers(Key[] n, Key back, Key ok) {
+        LinearLayout c = vbox();
+        c.addView(row(btn("1", 0, n[1]), btn("2", 0, n[2]), btn("3", 0, n[3])));
+        c.addView(row(btn("4", 0, n[4]), btn("5", 0, n[5]), btn("6", 0, n[6])));
+        c.addView(row(btn("7", 0, n[7]), btn("8", 0, n[8]), btn("9", 0, n[9])));
+        c.addView(row(btn("←", 0, back), btn("0", 0, n[0]), btn("↵", 1, ok)));
+        return c;
+    }
+
+    private View dpad(Key up, Key down, Key left, Key right, Key ok) {
+        LinearLayout holder = new LinearLayout(this);
+        holder.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams hl = lp(-1, -2);
+        hl.topMargin = dp(4);
+        hl.bottomMargin = dp(18);
+        holder.setLayoutParams(hl);
+
+        FrameLayout pad = new FrameLayout(this);
+        GradientDrawable d = new GradientDrawable();
+        d.setShape(GradientDrawable.OVAL);
+        d.setColor(0x0FFFFFFF);
+        d.setStroke(dp(1), GLASS_BORDER);
+        pad.setBackground(d);
+        holder.addView(pad, new LinearLayout.LayoutParams(dp(290), dp(290)));
+
+        pad.addView(arrow("▲", up, Gravity.TOP | Gravity.CENTER_HORIZONTAL));
+        pad.addView(arrow("▼", down, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL));
+        pad.addView(arrow("◀", left, Gravity.START | Gravity.CENTER_VERTICAL));
+        pad.addView(arrow("▶", right, Gravity.END | Gravity.CENTER_VERTICAL));
+
+        TextView okb = text("OK", 24, Color.WHITE, true);
+        okb.setGravity(Gravity.CENTER);
+        GradientDrawable od = new GradientDrawable();
+        od.setShape(GradientDrawable.OVAL);
+        od.setColor(RED);
+        okb.setBackground(od);
+        FrameLayout.LayoutParams ol = new FrameLayout.LayoutParams(dp(104), dp(104), Gravity.CENTER);
+        pad.addView(okb, ol);
+        bindKey(okb, ok);
+        return holder;
+    }
+
+    private View arrow(String sym, Key k, int gravity) {
+        TextView t = text(sym, 28, 0xFFCFCFD6, false);
+        t.setGravity(Gravity.CENTER);
+        FrameLayout.LayoutParams l = new FrameLayout.LayoutParams(dp(78), dp(78), gravity);
+        l.setMargins(dp(6), dp(6), dp(6), dp(6));
+        t.setLayoutParams(l);
+        bindKey(t, k);
+        return t;
+    }
+
+    // =========================================================
+    // Botoes e envio IR
+    // =========================================================
+    private LinearLayout vbox() {
+        LinearLayout c = new LinearLayout(this);
+        c.setOrientation(LinearLayout.VERTICAL);
+        return c;
+    }
+
+    private LinearLayout row(View... views) {
+        LinearLayout r = new LinearLayout(this);
+        r.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams rl = lp(-1, dp(66));
+        rl.bottomMargin = dp(12);
+        r.setLayoutParams(rl);
+        for (View v : views) {
+            LinearLayout.LayoutParams l = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
+            l.leftMargin = dp(6);
+            l.rightMargin = dp(6);
+            r.addView(v, l);
+        }
+        return r;
+    }
+
+    /** style: 0 vidro, 1 vermelho, 2 branco. */
+    private TextView btn(String label, int style, Key key) {
+        TextView t = text(label, label.length() > 4 ? 17 : 24, Color.WHITE, style != 0);
+        t.setGravity(Gravity.CENTER);
+        GradientDrawable d = new GradientDrawable();
+        d.setCornerRadius(dp(33));
+        if (style == 0) {
+            d.setColor(GLASS);
+            d.setStroke(dp(1), GLASS_BORDER);
+        } else if (style == 1) {
+            d.setColor(RED);
+        } else {
+            d.setColor(0xFFFFFFFF);
+            t.setTextColor(0xFF000000);
+        }
+        t.setBackground(d);
+        bindKey(t, key);
+        return t;
+    }
+
+    private View wideBtn(String label, final Key[] seq) {
+        TextView t = text(label, 15, Color.WHITE, false);
+        t.setGravity(Gravity.CENTER);
+        t.setBackground(glassShape(33));
+        LinearLayout.LayoutParams l = lp(-1, dp(60));
+        l.leftMargin = dp(6);
+        l.rightMargin = dp(6);
+        t.setLayoutParams(l);
+        attachPress(t);
+        t.setOnClickListener(v -> sendSequence(seq));
+        return t;
+    }
+
+    private void bindKey(View v, final Key key) {
+        attachPress(v);
+        v.setOnClickListener(x -> sendKey(key));
+    }
+
+    private void attachPress(View v) {
+        v.setOnTouchListener((view, e) -> {
+            int a = e.getActionMasked();
+            if (a == MotionEvent.ACTION_DOWN) {
+                view.animate().scaleX(0.94f).scaleY(0.94f).setDuration(70).start();
+                view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+            } else if (a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_CANCEL) {
+                view.animate().scaleX(1f).scaleY(1f).setDuration(110).start();
+            }
+            return false;
+        });
+    }
+
+    private void sendSequence(final Key[] seq) {
+        for (int i = 0; i < seq.length; i++) {
+            final Key k = seq[i];
+            handler.postDelayed(() -> sendKey(k), 420L * i);
+        }
+    }
+
+    private void sendKey(Key key) {
+        if (!irAvailable) {
+            flashStatus("Sem emissor IR neste celular", AMBER);
+            if (!warnedNoIr) {
+                warnedNoIr = true;
+                showNoIrDialog();
+            }
+            return;
+        }
+        try {
+            irManager.transmit(38000, pattern(key));
+            flashStatus("● Enviado: " + key.label + "  ·  " + key.hex, GREEN);
+        } catch (Exception e) {
+            flashStatus("Falha ao enviar o sinal", AMBER);
+        }
+    }
+
+    /** Monta o padrao de pulsos (microssegundos) a partir do codigo de 32 bits. */
+    private int[] pattern(Key key) {
+        long v = Long.parseLong(key.hex, 16);
+        int[] p = new int[67];
+        p[0] = key.proto == Proto.SAMSUNG ? 4500 : 9000;
+        p[1] = 4500;
+        int i = 2;
+        for (int b = 31; b >= 0; b--) {
+            p[i++] = 560;
+            p[i++] = ((v >> b) & 1L) == 1L ? 1690 : 560;
+        }
+        p[i] = 560;
+        return p;
+    }
+
+    private String statusIdle() {
+        return irAvailable ? "● Emissor IR pronto · 38 kHz" : "● Sem emissor IR neste celular";
+    }
+
+    private void flashStatus(String msg, int color) {
+        if (statusText == null) return;
+        statusText.setText(msg);
+        statusText.setTextColor(color);
+        statusText.setAlpha(0.4f);
+        statusText.animate().alpha(1f).setDuration(180).start();
+        handler.removeCallbacks(resetStatus);
+        handler.postDelayed(resetStatus, 2200);
+    }
+
+    private final Runnable resetStatus = new Runnable() {
+        @Override
+        public void run() {
+            if (statusText != null) {
+                statusText.setText(statusIdle());
+                statusText.setTextColor(irAvailable ? GREEN : AMBER);
+            }
+        }
+    };
+
+    private void showNoIrDialog() {
+        new AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+                .setTitle("Sem emissor infravermelho")
+                .setMessage("Este celular não tem emissor IR. O app abre normalmente, "
+                        + "mas os botões não conseguem enviar sinal para a TV. "
+                        + "Alguns modelos funcionam com um emissor IR USB-C.")
+                .setPositiveButton("Entendi", null)
+                .show();
+    }
+
+    // =========================================================
+    // Utilitarios de interface
+    // =========================================================
+    private View logoRow(String title, int sp) {
+        LinearLayout r = new LinearLayout(this);
+        r.setOrientation(LinearLayout.HORIZONTAL);
+        r.setGravity(Gravity.CENTER_VERTICAL);
+        View ring = new View(this);
+        GradientDrawable d = new GradientDrawable();
+        d.setShape(GradientDrawable.OVAL);
+        d.setColor(Color.TRANSPARENT);
+        d.setStroke(dp(3), RED);
+        ring.setBackground(d);
+        r.addView(ring, new LinearLayout.LayoutParams(dp(30), dp(30)));
+        TextView t = text(title, sp, 0xFFD6D6DC, false);
+        t.setLetterSpacing(0.3f);
+        LinearLayout.LayoutParams l = new LinearLayout.LayoutParams(-2, -2);
+        l.leftMargin = dp(12);
+        r.addView(t, l);
+        return r;
+    }
+
+    private GradientDrawable glassShape(int radiusDp) {
+        GradientDrawable d = new GradientDrawable();
+        d.setColor(GLASS);
+        d.setCornerRadius(dp(radiusDp));
+        d.setStroke(dp(1), GLASS_BORDER);
+        return d;
+    }
+
+    private TextView text(String s, float sp, int color, boolean bold) {
+        TextView t = new TextView(this);
+        t.setText(s);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
+        t.setTextColor(color);
+        t.setTypeface(null, bold ? Typeface.BOLD : Typeface.NORMAL);
+        return t;
+    }
+
+    private LinearLayout.LayoutParams lp(int w, int h) {
+        return new LinearLayout.LayoutParams(w, h);
+    }
+
+    private int dp(int v) {
+        return Math.round(v * density);
+    }
+}
