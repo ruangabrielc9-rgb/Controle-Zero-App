@@ -103,6 +103,7 @@ public class MainActivity extends Activity {
     private boolean warnedNoIr = false;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private float density;
+    private int rowH;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -294,12 +295,13 @@ public class MainActivity extends Activity {
 
         ScrollView sv = new ScrollView(this);
         sv.setVerticalScrollBarEnabled(false);
+        sv.setFillViewport(true);
         wrap.addView(sv, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
-        col.setPadding(dp(18), dp(40), dp(18), dp(28));
+        col.setPadding(dp(18), dp(32), dp(18), dp(16));
         sv.addView(col, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -320,157 +322,67 @@ public class MainActivity extends Activity {
         statusText.setPadding(dp(16), dp(10), dp(16), dp(10));
         statusText.setBackground(glassShape(20));
         LinearLayout.LayoutParams stl = lp(-1, -2);
-        stl.topMargin = dp(18);
+        stl.topMargin = dp(12);
         col.addView(statusText, stl);
 
-        // Abas
-        final LinearLayout seg = new LinearLayout(this);
-        seg.setOrientation(LinearLayout.HORIZONTAL);
-        seg.setPadding(dp(5), dp(5), dp(5), dp(5));
-        seg.setBackground(glassShape(22));
-        LinearLayout.LayoutParams sgl = lp(-1, -2);
-        sgl.topMargin = dp(14);
-        sgl.bottomMargin = dp(18);
-        col.addView(seg, sgl);
+        // Altura de cada linha: preenche a tela (9 linhas de botoes)
+        int totalH = stage.getHeight() > 0 ? stage.getHeight() : dp(720);
+        int h = (totalH - dp(250)) / 9 - dp(10);
+        rowH = Math.max(dp(46), Math.min(dp(70), h));
 
-        final FrameLayout content = new FrameLayout(this);
-        col.addView(content, lp(-1, -2));
+        LinearLayout grid = isSam ? samsungGrid() : lgGrid();
+        LinearLayout.LayoutParams gl = lp(-1, -2);
+        gl.topMargin = dp(16);
+        col.addView(grid, gl);
 
-        final String[] names = {"Serviço", "Navegação", "Números"};
-        final TextView[] tabs = new TextView[3];
-        for (int i = 0; i < 3; i++) {
-            final int idx = i;
-            TextView t = text(names[i], 15, MUTED, false);
-            t.setGravity(Gravity.CENTER);
-            t.setPadding(0, dp(12), 0, dp(12));
-            seg.addView(t, new LinearLayout.LayoutParams(0, -2, 1f));
-            tabs[i] = t;
-            t.setOnClickListener(v -> selectTab(isSam, idx, tabs, content));
-        }
-        selectTab(isSam, 0, tabs, content);
-
-        // Aviso
         String note = isSam
-                ? "A sequência Mute·1·8·2·Power é a mais usada para o menu de serviço, mas varia por modelo. Teste antes de usar com cliente."
-                : "In-Start e Ez-Adjust vêm de tabela pública de um modelo. Navegação e números da LG ainda precisam de teste em TV real.";
-        TextView nt = text(note, 12.5f, AMBER, false);
+                ? "A sequência Mute·1·8·2·Power varia por modelo. Teste antes de usar com cliente."
+                : "LG: In-Start e Ez-Adjust de tabela pública; navegação e números ainda a testar em TV real.";
+        TextView nt = text(note, 11.5f, AMBER, false);
         nt.setLineSpacing(0, 1.1f);
         LinearLayout.LayoutParams nl = lp(-1, -2);
-        nl.topMargin = dp(22);
+        nl.topMargin = dp(4);
         col.addView(nt, nl);
 
         return wrap;
     }
 
-    private void selectTab(boolean isSam, int idx, TextView[] tabs, FrameLayout content) {
-        for (int i = 0; i < tabs.length; i++) {
-            boolean on = i == idx;
-            tabs[i].setTextColor(on ? Color.WHITE : MUTED);
-            tabs[i].setTypeface(null, on ? Typeface.BOLD : Typeface.NORMAL);
-            if (on) {
-                GradientDrawable d = new GradientDrawable();
-                d.setColor(RED);
-                d.setCornerRadius(dp(17));
-                tabs[i].setBackground(d);
-            } else {
-                tabs[i].setBackground(null);
-            }
-        }
-        content.removeAllViews();
-        View v = isSam ? samsungTab(idx) : lgTab(idx);
-        content.addView(v);
-        v.setAlpha(0f);
-        v.setTranslationY(dp(10));
-        v.animate().alpha(1f).translationY(0).setDuration(200).start();
-    }
-
-    // ----- Abas Samsung -----
-    private View samsungTab(int idx) {
-        if (idx == 0) {
-            LinearLayout c = vbox();
-            c.addView(row(btn("POWER", 1, S_POWER), btn("INFO", 0, S_INFO), btn("FACTORY", 2, S_FACTORY)));
-            c.addView(row(btn("MUTE", 0, S_MUTE), btn("MENU", 0, S_MENU), btn("SOURCE", 0, S_SOURCE)));
-            c.addView(wideBtn("Sequência de serviço  ·  Mute 1 8 2 Power", new Key[]{
-                    S_MUTE, S_NUM[1], S_NUM[8], S_NUM[2], S_POWER}));
-            return c;
-        } else if (idx == 1) {
-            LinearLayout c = vbox();
-            c.addView(dpad(S_UP, S_DOWN, S_LEFT, S_RIGHT, S_OK));
-            c.addView(row(btn("RETURN", 0, S_RETURN), btn("EXIT", 0, S_EXIT), btn("MENU", 0, S_MENU)));
-            return c;
-        } else {
-            return numbers(S_NUM, S_RETURN, S_OK);
-        }
-    }
-
-    // ----- Abas LG -----
-    private View lgTab(int idx) {
-        if (idx == 0) {
-            LinearLayout c = vbox();
-            c.addView(row(btn("POWER", 1, L_POWER), btn("MUTE", 0, L_MUTE)));
-            c.addView(row(btn("IN-START", 2, L_INSTART), btn("EZ-ADJUST", 2, L_EZADJUST)));
-            c.addView(row(btn("MENU", 0, L_MENU)));
-            return c;
-        } else if (idx == 1) {
-            LinearLayout c = vbox();
-            c.addView(dpad(L_UP, L_DOWN, L_LEFT, L_RIGHT, L_OK));
-            c.addView(row(btn("VOLTAR", 0, L_BACK), btn("MENU", 0, L_MENU)));
-            return c;
-        } else {
-            return numbers(L_NUM, L_BACK, L_OK);
-        }
-    }
-
-    private View numbers(Key[] n, Key back, Key ok) {
+    // ----- Grade unica Samsung -----
+    private LinearLayout samsungGrid() {
         LinearLayout c = vbox();
+        c.addView(row(btn("POWER", 1, S_POWER), btn("INFO", 0, S_INFO), btn("FACTORY", 2, S_FACTORY)));
+        LinearLayout r2 = row(btn("MUTE", 0, S_MUTE), seqBtn(new Key[]{
+                S_MUTE, S_NUM[1], S_NUM[8], S_NUM[2], S_POWER}));
+        ((LinearLayout.LayoutParams) r2.getChildAt(1).getLayoutParams()).weight = 2f;
+        c.addView(r2);
+        addNumbers(c, S_NUM, S_RETURN, S_OK);
+        c.addView(row(btn("RETURN", 0, S_RETURN), btn("▲", 0, S_UP), btn("EXIT", 0, S_EXIT)));
+        c.addView(row(btn("◀", 0, S_LEFT), btn("OK", 1, S_OK), btn("▶", 0, S_RIGHT)));
+        c.addView(row(btn("MENU", 0, S_MENU), btn("▼", 0, S_DOWN), btn("SOURCE", 0, S_SOURCE)));
+        return c;
+    }
+
+    // ----- Grade unica LG -----
+    private LinearLayout lgGrid() {
+        LinearLayout c = vbox();
+        c.addView(row(btn("POWER", 1, L_POWER), btn("IN-START", 2, L_INSTART), btn("EZ-ADJUST", 2, L_EZADJUST)));
+        c.addView(row(btn("MUTE", 0, L_MUTE), btn("MENU", 0, L_MENU), btn("VOLTAR", 0, L_BACK)));
+        addNumbers(c, L_NUM, L_BACK, L_OK);
+        c.addView(row(blank(), btn("▲", 0, L_UP), blank()));
+        c.addView(row(btn("◀", 0, L_LEFT), btn("OK", 1, L_OK), btn("▶", 0, L_RIGHT)));
+        c.addView(row(blank(), btn("▼", 0, L_DOWN), blank()));
+        return c;
+    }
+
+    private void addNumbers(LinearLayout c, Key[] n, Key back, Key ok) {
         c.addView(row(btn("1", 0, n[1]), btn("2", 0, n[2]), btn("3", 0, n[3])));
         c.addView(row(btn("4", 0, n[4]), btn("5", 0, n[5]), btn("6", 0, n[6])));
         c.addView(row(btn("7", 0, n[7]), btn("8", 0, n[8]), btn("9", 0, n[9])));
         c.addView(row(btn("←", 0, back), btn("0", 0, n[0]), btn("↵", 1, ok)));
-        return c;
     }
 
-    private View dpad(Key up, Key down, Key left, Key right, Key ok) {
-        LinearLayout holder = new LinearLayout(this);
-        holder.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams hl = lp(-1, -2);
-        hl.topMargin = dp(4);
-        hl.bottomMargin = dp(18);
-        holder.setLayoutParams(hl);
-
-        FrameLayout pad = new FrameLayout(this);
-        GradientDrawable d = new GradientDrawable();
-        d.setShape(GradientDrawable.OVAL);
-        d.setColor(0x0FFFFFFF);
-        d.setStroke(dp(1), GLASS_BORDER);
-        pad.setBackground(d);
-        holder.addView(pad, new LinearLayout.LayoutParams(dp(290), dp(290)));
-
-        pad.addView(arrow("▲", up, Gravity.TOP | Gravity.CENTER_HORIZONTAL));
-        pad.addView(arrow("▼", down, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL));
-        pad.addView(arrow("◀", left, Gravity.START | Gravity.CENTER_VERTICAL));
-        pad.addView(arrow("▶", right, Gravity.END | Gravity.CENTER_VERTICAL));
-
-        TextView okb = text("OK", 24, Color.WHITE, true);
-        okb.setGravity(Gravity.CENTER);
-        GradientDrawable od = new GradientDrawable();
-        od.setShape(GradientDrawable.OVAL);
-        od.setColor(RED);
-        okb.setBackground(od);
-        FrameLayout.LayoutParams ol = new FrameLayout.LayoutParams(dp(104), dp(104), Gravity.CENTER);
-        pad.addView(okb, ol);
-        bindKey(okb, ok);
-        return holder;
-    }
-
-    private View arrow(String sym, Key k, int gravity) {
-        TextView t = text(sym, 28, 0xFFCFCFD6, false);
-        t.setGravity(Gravity.CENTER);
-        FrameLayout.LayoutParams l = new FrameLayout.LayoutParams(dp(78), dp(78), gravity);
-        l.setMargins(dp(6), dp(6), dp(6), dp(6));
-        t.setLayoutParams(l);
-        bindKey(t, k);
-        return t;
+    private View blank() {
+        return new View(this);
     }
 
     // =========================================================
@@ -485,8 +397,8 @@ public class MainActivity extends Activity {
     private LinearLayout row(View... views) {
         LinearLayout r = new LinearLayout(this);
         r.setOrientation(LinearLayout.HORIZONTAL);
-        LinearLayout.LayoutParams rl = lp(-1, dp(66));
-        rl.bottomMargin = dp(12);
+        LinearLayout.LayoutParams rl = lp(-1, rowH);
+        rl.bottomMargin = dp(10);
         r.setLayoutParams(rl);
         for (View v : views) {
             LinearLayout.LayoutParams l = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
@@ -499,7 +411,8 @@ public class MainActivity extends Activity {
 
     /** style: 0 vidro, 1 vermelho, 2 branco. */
     private TextView btn(String label, int style, Key key) {
-        TextView t = text(label, label.length() > 4 ? 17 : 24, Color.WHITE, style != 0);
+        int len = label.length();
+        TextView t = text(label, len <= 2 ? 24 : (len <= 4 ? 20 : (len <= 6 ? 16 : 14)), Color.WHITE, style != 0);
         t.setGravity(Gravity.CENTER);
         GradientDrawable d = new GradientDrawable();
         d.setCornerRadius(dp(33));
@@ -517,14 +430,10 @@ public class MainActivity extends Activity {
         return t;
     }
 
-    private View wideBtn(String label, final Key[] seq) {
-        TextView t = text(label, 15, Color.WHITE, false);
+    private View seqBtn(final Key[] seq) {
+        TextView t = text("Sequência de serviço\nMute · 1 · 8 · 2 · Power", 12.5f, Color.WHITE, false);
         t.setGravity(Gravity.CENTER);
         t.setBackground(glassShape(33));
-        LinearLayout.LayoutParams l = lp(-1, dp(60));
-        l.leftMargin = dp(6);
-        l.rightMargin = dp(6);
-        t.setLayoutParams(l);
         attachPress(t);
         t.setOnClickListener(v -> sendSequence(seq));
         return t;
