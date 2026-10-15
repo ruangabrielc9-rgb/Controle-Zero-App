@@ -107,6 +107,12 @@ public class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private float density;
     private int rowH;
+    // Modo de envio: 0 = leve (sem vibracao/animacao ao enviar), 1 = padrao, 2 = duplo (leve + frame repetido)
+    private static final int MODE_LEVE = 0;
+    private static final int MODE_PADRAO = 1;
+    private static final int MODE_DUPLO = 2;
+    private int sendMode = MODE_LEVE;
+    private TextView modeChip;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -175,7 +181,7 @@ public class MainActivity extends Activity {
         View spacer = new View(this);
         col.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1f));
 
-        TextView foot = text("Desenvolvido por Ruan\n⭕  Projeto Bancada Zero · v1.3", 13, MUTED, false);
+        TextView foot = text("Desenvolvido por Ruan\n⭕  Projeto Bancada Zero · v1.4", 13, MUTED, false);
         foot.setLineSpacing(0, 1.25f);
         foot.setGravity(Gravity.CENTER);
         foot.setLetterSpacing(0.08f);
@@ -319,6 +325,17 @@ public class MainActivity extends Activity {
         back.setOnClickListener(v -> closeRemote());
         head.addView(back);
         head.addView(logoRow(name.toUpperCase(), 13));
+        View hs = new View(this);
+        head.addView(hs, new LinearLayout.LayoutParams(0, 1, 1f));
+        modeChip = text(modeLabel(), 11, Color.WHITE, true);
+        modeChip.setPadding(dp(12), dp(8), dp(12), dp(8));
+        modeChip.setBackground(glassShape(16));
+        modeChip.setOnClickListener(v -> {
+            sendMode = (sendMode + 1) % 3;
+            modeChip.setText(modeLabel());
+            flashStatus("Modo de envio: " + modeLabel().replace("MODO ", ""), GREEN);
+        });
+        head.addView(modeChip);
         col.addView(head);
 
         // Status do emissor IR
@@ -475,6 +492,7 @@ public class MainActivity extends Activity {
 
     private void attachPress(View v) {
         v.setOnTouchListener((view, e) -> {
+            if (sendMode != MODE_PADRAO) return false;
             int a = e.getActionMasked();
             if (a == MotionEvent.ACTION_DOWN) {
                 view.animate().scaleX(0.94f).scaleY(0.94f).setDuration(70).start();
@@ -504,10 +522,21 @@ public class MainActivity extends Activity {
         }
         // Igual ao app antigo: o sinal e enviado em uma thread separada.
         final int[] pat = pattern(key);
-        flashStatus("● Enviado: " + key.label + "  ·  " + key.hex, GREEN);
+        final int mode = sendMode;
+        final String msg = "● Enviado: " + key.label + "  ·  " + key.hex;
+        if (mode == MODE_PADRAO) {
+            flashStatus(msg, GREEN);
+        }
         new Thread(() -> {
             try {
                 irManager.transmit(38000, pat);
+                if (mode == MODE_DUPLO) {
+                    Thread.sleep(45);
+                    irManager.transmit(38000, pat);
+                }
+                if (mode != MODE_PADRAO) {
+                    runOnUiThread(() -> flashStatus(msg, GREEN));
+                }
             } catch (Exception e) {
                 runOnUiThread(() -> flashStatus("Falha ao enviar o sinal", AMBER));
             }
@@ -527,6 +556,12 @@ public class MainActivity extends Activity {
         }
         p[i] = 560;
         return p;
+    }
+
+    private String modeLabel() {
+        if (sendMode == MODE_LEVE) return "MODO LEVE";
+        if (sendMode == MODE_PADRAO) return "MODO PADRÃO";
+        return "MODO DUPLO";
     }
 
     private String statusIdle() {
