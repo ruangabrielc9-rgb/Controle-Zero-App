@@ -175,7 +175,7 @@ public class MainActivity extends Activity {
         View spacer = new View(this);
         col.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1f));
 
-        TextView foot = text("Desenvolvido por Ruan\n⭕  Projeto Bancada Zero · v1.2", 13, MUTED, false);
+        TextView foot = text("Desenvolvido por Ruan\n⭕  Projeto Bancada Zero · v1.3", 13, MUTED, false);
         foot.setLineSpacing(0, 1.25f);
         foot.setGravity(Gravity.CENTER);
         foot.setLetterSpacing(0.08f);
@@ -502,12 +502,16 @@ public class MainActivity extends Activity {
             }
             return;
         }
-        try {
-            irManager.transmit(38000, pattern(key));
-            flashStatus("● Enviado: " + key.label + "  ·  " + key.hex, GREEN);
-        } catch (Exception e) {
-            flashStatus("Falha ao enviar o sinal", AMBER);
-        }
+        // Igual ao app antigo: o sinal e enviado em uma thread separada.
+        final int[] pat = pattern(key);
+        flashStatus("● Enviado: " + key.label + "  ·  " + key.hex, GREEN);
+        new Thread(() -> {
+            try {
+                irManager.transmit(38000, pat);
+            } catch (Exception e) {
+                runOnUiThread(() -> flashStatus("Falha ao enviar o sinal", AMBER));
+            }
+        }).start();
     }
 
     /** Monta o padrao de pulsos (microssegundos) a partir do codigo de 32 bits. */
