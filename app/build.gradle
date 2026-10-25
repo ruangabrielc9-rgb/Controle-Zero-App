@@ -14,11 +14,21 @@ android {
         versionName "1.0"
     }
 
+    signingConfigs {
+        catalogo {
+            // Chave fixa: assim cada versao nova instala por cima da anterior sem apagar os dados do app.
+            storeFile file('catalogo.keystore')
+            storeType 'pkcs12'
+            storePassword 'catalogo2026'
+            keyAlias 'catalogo'
+            keyPassword 'catalogo2026'
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
-            // Assinado com a chave de debug do ambiente de build (instalacao direta, fora da Play Store).
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.catalogo
         }
     }
 
