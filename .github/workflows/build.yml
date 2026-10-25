@@ -47,15 +47,19 @@ jobs:
           name: CatalogoZero-apk
           path: CatalogoZero.apk
 
-      - name: Tirar o primeiro lancamento do Catalogo de ultima versao
+      - name: Apagar lancamentos antigos do Catalogo (o controle de TV nao e mexido)
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release delete catalogo-v1.0.11 --cleanup-tag --yes || true
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release list --limit 100 --json tagName --jq '.[].tagName | select(startswith("catalogo-v"))' \
+            | xargs -r -n1 gh release delete --cleanup-tag --yes || true
 
       - name: Publicar na aba Releases
         uses: softprops/action-gh-release@v2
         with:
           make_latest: "false"
+          prerelease: true
           tag_name: catalogo-v1.0.${{ github.run_number }}
           target_commitish: ${{ github.sha }}
           name: Catálogo Zero v1.0.${{ github.run_number }}
