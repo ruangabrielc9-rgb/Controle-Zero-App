@@ -1,0 +1,44 @@
+34 = SDK do emulador
+Performing Streamed Install
+Success
+PASSOU  abre no emulador e a página carrega
+PASSOU  a ponte do Android existe (backup automático disponível)
+PASSOU  banco de dados na versão 2 com lixeira e meta -> ['adapt', 'itens', 'lixo', 'meta']
+PASSOU  cadastro com foto de 3000x2000 salva
+PASSOU  item gravado com código PM-0001 -> ['PM-0001']
+PASSOU  foto foi reduzida (máx. 1400 px e abaixo de 1,5 MB) -> 1400x933 35897 bytes
+PASSOU  depois de fechar o app à força o item continua lá
+PASSOU  a foto continua legível depois de reabrir -> 1400x933
+PASSOU  a foto aparece no cartão
+PASSOU  cópia automática apareceu em Downloads/CatalogoZero sozinha -> ['CatalogoZero-2026-10-25-220019.json']
+PASSOU  a cópia tem cabeçalho, o item, a foto (JPEG válido) e o marcador de fim
+PASSOU  a tela de backup mostra a última cópia automática -> Última cópia automática: hoje às 22:00.
+Agora: 1 item e 0 adaptações.
+PASSOU  depois do app ser morto aparece o aviso de rascunho
+PASSOU  o rascunho volta com texto e foto
+PASSOU  salvar o rascunho cria o segundo item PM-0002 -> ['PM-0001', 'PM-0002']
+PASSOU  botão voltar do Android fecha a tela do item sem sair do app
+foco depois de tocar em Foto: mCurrentFocus=Window{5ca8c04 u0 com.android.intentresolver/com.android.intentresolver.ChooserActivity}
+  mFocusedApp=ActivityRecord{fa9cc8 u0 com.android.intentresolver/.ChooserActivity t10}
+PASSOU  tocar em Foto abre o seletor do Android (galeria e câmera) -> mCurrentFocus=Window{5ca8c04 u0 com.android.intentresolver/com.android.intentresolver.ChooserActivity}
+  mFocusedApp=ActivityRecord{fa9cc8 u0 com.android.intentresolver/.ChooserActivity t10}
+PASSOU  cancelar o seletor volta para o app sem travar -> mCurrentFocus=Window{4b17eeb u0 br.bancadazero.catalogo/br.bancadazero.catalogo.MainActivity}
+PASSOU  a página continua respondendo depois de cancelar
+Performing Streamed Install
+Success
+PASSOU  instalar a versão por cima não apaga os dados -> ['Main TV 43 teste', 'Placa LG que eu estava cadastrando']
+PASSOU  excluir manda para a lixeira (1 item + 1 na lixeira) -> 1 itens, 1 lixeira
+PASSOU  recuperar da lixeira devolve o item
+tamanhos das fotos de teste (bytes): [105272, 102647, 102370, 100274, 101130]
+PASSOU  150 placas com 300 fotos carregam -> 152
+PASSOU  cópia automática de 150 placas termina e grava arquivo grande -> ('CatalogoZero-2026-10-25-220106.json', 41079626) em 4s
+PASSOU  o app continua vivo depois da cópia grande
+PASSOU  sobra no máximo 1 cópia por dia (as do mesmo dia são trocadas) -> ['CatalogoZero-2026-10-25-220106.json']
+PASSOU  a cópia continua em Downloads depois de desinstalar o app -> ['CatalogoZero-2026-10-25-220106.json']
+Performing Streamed Install
+Success
+PASSOU  app reinstalado começa vazio (como acontece num celular novo)
+PASSOU  restaurar a cópia num app reinstalado traz as 152 placas de volta -> 152 itens · 152 registros restaurados
+PASSOU  as fotos restauradas abrem -> 1400x933
+
+30/30 verificações passaram
