@@ -100,8 +100,8 @@ jobs:
           name: resultado-do-teste
           path: teste/saida
 
-      - name: Guardar o registro do teste (so se falhar)
-        if: failure()
+      - name: Guardar o registro do teste
+        if: always()
         run: |
           git config user.name "actions"
           git config user.email "actions@users.noreply.github.com"
