@@ -60,7 +60,7 @@ class Pagina:
             time.sleep(1)
         if not url:
             raise RuntimeError("pagina do WebView nao apareceu no DevTools")
-        self.ws = websocket.create_connection(url, timeout=120, max_size=None)
+        self.ws = websocket.create_connection(url, timeout=120, max_size=None, suppress_origin=True)
         self.pronto()
     def cdp(self, metodo, params=None):
         self.n += 1; i = self.n
