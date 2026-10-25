@@ -61,6 +61,10 @@ button{cursor:pointer}
 .dica p{margin:0;flex:1}
 .dica button{border:0;background:transparent;color:var(--ink);font-size:22px;line-height:1;padding:0 4px}
 
+#avisos{display:grid;gap:10px;padding-top:6px}
+.aviso{border:1px solid var(--red);background:var(--red-soft);border-radius:12px;padding:12px 14px;display:grid;gap:10px;font-size:14px}
+.aviso p{margin:0}
+.aviso .row .btn{flex:1 1 120px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;padding-top:8px}
 .card{display:flex;flex-direction:column;min-width:0;text-align:left;padding:0;border:1px solid var(--line);background:var(--glass);border-radius:14px;overflow:hidden}
 .thumb{position:relative;display:block;aspect-ratio:4/3;background:var(--bg2);border-bottom:1px solid var(--line)}
@@ -183,6 +187,7 @@ textarea.in{min-height:90px;resize:vertical}
     <div class="count-line" id="countLine"></div>
   </header>
   <div id="dica" class="dica" hidden><p><b>Para instalar no iPhone:</b> toque em Compartilhar (quadrado com seta) e depois em Adicionar à Tela de Início.</p><button type="button" id="dicaX" aria-label="Fechar">×</button></div>
+  <div id="avisos"></div>
   <main id="main"></main>
 </div>
 
@@ -226,7 +231,7 @@ textarea.in{min-height:90px;resize:vertical}
   var norm=function(s){return String(s==null?"":s).normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase();};
   var main=$("#main"), sheetD=$("#sheetDetail"), sheetF=$("#sheetForm"), sheetB=$("#sheetBackup");
 
-  var items=[], adapt=[], tab="estoque";
+  var items=[], adapt=[], lixo=[], meta={}, seq={}, tab="estoque";
   var fTipo="", fEstado="", fSetor="", fFonte=false, fCond="", fRes="", q="";
   var curForm=null;
   var stack=[], dbh=null, toastTimer=null, urls=[], detailUrls=[];
@@ -252,12 +257,18 @@ textarea.in{min-height:90px;resize:vertical}
   function tipoInfo(n){ for(var i=0;i<TIPOS.length;i++){ if(TIPOS[i].n===n)return TIPOS[i]; } return TIPOS[TIPOS.length-1]; }
 
   /* ---------- armazenamento no celular (IndexedDB) ---------- */
+  var VERSAO="1.1";
   function openDb(){
     return new Promise(function(res,rej){
-      var r=indexedDB.open("catalogo-zero",1);
-      r.onupgradeneeded=function(){ var d=r.result; d.createObjectStore("itens",{keyPath:"id"}); d.createObjectStore("adapt",{keyPath:"id"}); };
-      r.onsuccess=function(){res(r.result);};
+      var r=indexedDB.open("catalogo-zero",2);
+      r.onupgradeneeded=function(){
+        var d=r.result;
+        ["itens","adapt","lixo"].forEach(function(n){ if(!d.objectStoreNames.contains(n))d.createObjectStore(n,{keyPath:"id"}); });
+        if(!d.objectStoreNames.contains("meta"))d.createObjectStore("meta",{keyPath:"k"});
+      };
+      r.onsuccess=function(){ var d=r.result; d.onversionchange=function(){d.close();}; res(d); };
       r.onerror=function(){rej(r.error);};
+      r.onblocked=function(){rej(new Error("blocked"));};
     });
   }
   function run(store,mode,fn){
@@ -265,21 +276,169 @@ textarea.in{min-height:90px;resize:vertical}
       var t=dbh.transaction(store,mode), s=t.objectStore(store), r=fn(s);
       t.oncomplete=function(){res(r?r.result:undefined);};
       t.onerror=function(){rej(t.error);};
-      t.onabort=function(){rej(t.error);};
+      t.onabort=function(){rej(t.error||new Error("abort"));};
+    });
+  }
+  /* varias lojas na mesma transacao: ou grava tudo ou nao grava nada */
+  function tx(stores,fn){
+    return new Promise(function(res,rej){
+      var t=dbh.transaction(stores,"readwrite");
+      t.oncomplete=function(){res();};
+      t.onerror=function(){rej(t.error);};
+      t.onabort=function(){rej(t.error||new Error("abort"));};
+      try{ fn(t); }catch(e){ try{t.abort();}catch(x){} }
+    });
+  }
+  /* le o registro mais novo dentro da transacao e grava a mudanca (evita perder toques seguidos) */
+  function update(store,id,fn){
+    return new Promise(function(res,rej){
+      var t=dbh.transaction(store,"readwrite"), s=t.objectStore(store), out=null, g=s.get(id);
+      g.onsuccess=function(){ var cur=g.result; if(!cur)return; out=fn(Object.assign({},cur)); s.put(out); };
+      t.oncomplete=function(){res(out);};
+      t.onerror=function(){rej(t.error);};
+      t.onabort=function(){rej(t.error||new Error("abort"));};
     });
   }
   function loadAll(){
-    return Promise.all([run("itens","readonly",function(s){return s.getAll();}),run("adapt","readonly",function(s){return s.getAll();})])
-      .then(function(r){items=r[0]||[];adapt=r[1]||[];});
+    return Promise.all([
+      run("itens","readonly",function(s){return s.getAll();}),
+      run("adapt","readonly",function(s){return s.getAll();}),
+      run("lixo","readonly",function(s){return s.getAll();}),
+      run("meta","readonly",function(s){return s.getAll();})
+    ]).then(function(r){
+      items=r[0]||[]; adapt=r[1]||[]; lixo=r[2]||[];
+      meta={}; (r[3]||[]).forEach(function(m){meta[m.k]=m.v;});
+      recalcSeq();
+    });
   }
   function putIt(store,o){ return run(store,"readwrite",function(s){return s.put(o);}); }
-  function delIt(store,id){ return run(store,"readwrite",function(s){return s["delete"](id);}); }
+  function metaSet(k,v){ meta[k]=v; return run("meta","readwrite",function(s){return s.put({k:k,v:v});}); }
+  function metaDel(k){ delete meta[k]; return run("meta","readwrite",function(s){return s["delete"](k);}); }
+
+  /* numeracao dos codigos: nunca repete, nem de item que foi para a lixeira */
+  function recalcSeq(){
+    var m=Object.assign({},meta.seq||{}), re=/^([A-Z]{2})-(\d+)$/;
+    var todos=items.concat(lixo.filter(function(x){return x.tipo==="item"&&x.reg;}).map(function(x){return x.reg;}));
+    todos.forEach(function(i){
+      var k=re.exec(i.cod||""); if(k){ var n=parseInt(k[2],10); if(!(m[k[1]]>=n))m[k[1]]=n; }
+    });
+    seq=m;
+  }
+  function nextCod(tipo){
+    var p=tipoInfo(tipo).p, n=(seq[p]||0)+1; seq[p]=n;
+    return p+"-"+String(n).padStart(4,"0");
+  }
+
+  /* excluir = mandar para a lixeira (some da lista, mas da para recuperar) */
+  function apagar(kind,rec){
+    var store=(kind==="item")?"itens":"adapt";
+    return tx([store,"lixo"],function(t){
+      t.objectStore("lixo").put({id:kind+":"+rec.id,tipo:kind,apagadoEm:Date.now(),reg:rec});
+      t.objectStore(store)["delete"](rec.id);
+    }).then(mudou);
+  }
+  function recuperar(entry){
+    var store=(entry.tipo==="item")?"itens":"adapt";
+    return tx([store,"lixo"],function(t){
+      var r=Object.assign({},entry.reg); r.atualizado=Date.now();
+      t.objectStore(store).put(r);
+      t.objectStore("lixo")["delete"](entry.id);
+    }).then(mudou);
+  }
+  function apagarDeVez(entry){ return run("lixo","readwrite",function(s){return s["delete"](entry.id);}).then(mudou); }
+
+  /* ---------- copia automatica (so no app Android) ---------- */
+  var autoTimer=null, autoBusy=false, MIN_AUTO=30*60*1000, DIA=86400000;
+  function temAuto(){ return !!(window.AndroidBridge&&window.AndroidBridge.beginAuto); }
+  function mudou(){
+    meta.sujo=Date.now();
+    run("meta","readwrite",function(s){return s.put({k:"sujo",v:meta.sujo});}).catch(function(){});
+    agendarAuto();
+  }
+  function agendarAuto(ms){
+    if(!temAuto())return;
+    clearTimeout(autoTimer);
+    autoTimer=setTimeout(function(){rodarAuto(false);},ms==null?15000:ms);
+  }
+  function stamp(){
+    var d=new Date(), p=function(n){return String(n).padStart(2,"0");};
+    return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+"-"+p(d.getHours())+p(d.getMinutes())+p(d.getSeconds());
+  }
+  function bw(str){
+    for(var i=0;i<str.length;){
+      var e=Math.min(str.length,i+400000), cc=str.charCodeAt(e-1);
+      if(e<str.length&&cc>=0xD800&&cc<=0xDBFF)e++;
+      window.AndroidBridge.chunk(str.slice(i,e)); i=e;
+    }
+  }
+  function rodarAuto(force){
+    if(!temAuto()||autoBusy||!dbh)return Promise.resolve(false);
+    if(!items.length&&!adapt.length&&!lixo.length)return Promise.resolve(false);
+    if(!force){
+      if(!meta.sujo)return Promise.resolve(false);
+      var falta=MIN_AUTO-(Date.now()-(meta.ultimoAuto||0));
+      if(meta.ultimoAuto&&falta>0){ agendarAuto(falta+1000); return Promise.resolve(false); }
+    }
+    autoBusy=true;
+    var inicio=meta.sujo||0, nome="CatalogoZero-"+stamp()+".json";
+    var done=new Promise(function(res){
+      window.__autoDone=function(ok,msg){res({ok:!!ok,msg:msg||""});};
+      setTimeout(function(){res({ok:false,msg:"tempo esgotado"});},240000);
+    });
+    return Promise.resolve().then(function(){
+      window.AndroidBridge.beginAuto(nome);
+      return streamBackup(bw);
+    }).then(function(){ window.AndroidBridge.endAuto(); return done; })
+      .catch(function(e){ try{window.AndroidBridge.abortSave();}catch(x){} return {ok:false,msg:String((e&&e.message)||e)}; })
+      .then(function(r){
+        autoBusy=false;
+        if(r.ok){
+          meta.autoErro=""; metaSet("autoErro","").catch(function(){});
+          metaSet("ultimoAuto",Date.now()).catch(function(){});
+          if(meta.sujo===inicio)metaDel("sujo").catch(function(){}); else agendarAuto(MIN_AUTO);
+        }else{
+          metaSet("autoErro",r.msg||"erro").catch(function(){});
+          agendarAuto(10*60*1000);
+        }
+        render();
+        return r.ok;
+      });
+  }
+
+  /* ---------- gravacao do arquivo de backup (um registro por linha, fotos em base64) ---------- */
+  function blobToData(b){return new Promise(function(res,rej){var r=new FileReader();r.onload=function(){res(r.result);};r.onerror=function(){rej(r.error);};r.readAsDataURL(b);});}
+  function dataToBlob(u){
+    var i=u.indexOf(","), head=u.slice(0,i), bin=atob(u.slice(i+1)), n=bin.length, a=new Uint8Array(n);
+    for(var k=0;k<n;k++)a[k]=bin.charCodeAt(k);
+    var m=/^data:([^;,]+)/.exec(head);
+    return new Blob([a],{type:m?m[1]:"image/jpeg"});
+  }
+  function packOne(s,rec){
+    var alvo=(s==="x")?rec.reg:rec;
+    return Promise.all((alvo.fotos||[]).map(blobToData)).then(function(f){
+      var c=Object.assign({},alvo); c.fotos=f;
+      var o=(s==="x")?{id:rec.id,tipo:rec.tipo,apagadoEm:rec.apagadoEm,reg:c}:c;
+      return JSON.stringify({s:s,o:o});
+    });
+  }
+  function streamBackup(write){
+    var lista=[["i",items],["a",adapt],["x",lixo]];
+    var tot={i:items.length,a:adapt.length,x:lixo.length};
+    var p=Promise.resolve(write(JSON.stringify({app:"catalogo-zero",versao:2,app_versao:VERSAO,exportado:new Date().toISOString(),seq:seq,total:tot})+"\n"));
+    lista.forEach(function(par){
+      par[1].forEach(function(rec){
+        p=p.then(function(){return packOne(par[0],rec);}).then(function(linha){return write(linha+"\n");});
+      });
+    });
+    return p.then(function(){return write(JSON.stringify({fim:true,total:tot})+"\n");});
+  }
 
   /* ---------- fotos ---------- */
   function urlOf(blob){ var u=URL.createObjectURL(blob); urls.push(u); return u; }
   function freeUrls(){ urls.forEach(function(u){URL.revokeObjectURL(u);}); urls=[]; }
   function prep(file){
-    return createImageBitmap(file,{imageOrientation:"from-image"}).then(function(bmp){
+    var abrir=function(){ return createImageBitmap(file,{imageOrientation:"from-image"}).catch(function(){return createImageBitmap(file);}); };
+    return abrir().then(function(bmp){
       var s=Math.min(1,1400/Math.max(bmp.width,bmp.height));
       var w=Math.round(bmp.width*s), h=Math.round(bmp.height*s);
       var c=document.createElement("canvas"); c.width=w; c.height=h;
@@ -383,6 +542,7 @@ textarea.in{min-height:90px;resize:vertical}
     $("#fabTxt").textContent=isE?"Novo item":"Nova adaptação";
     $("#q").placeholder=isE?"Buscar placa, modelo, código, defeito, local":"Buscar modelo da TV, placa, o que alterei";
     renderChips();
+    renderAvisos();
     var line="";
     if(isE){
       var list=filteredItems(), filtering=fTipo||fEstado||fSetor||fFonte||fCond||q;
@@ -391,7 +551,7 @@ textarea.in{min-height:90px;resize:vertical}
       var invL=0; list.forEach(function(i){invL+=(i.pago||0)+(i.gasto||0);});
       if(invL>0)line+=" · investido "+money(invL);
       if(ocultas)line+=(line?" · ":"")+ocultas+(ocultas===1?" descartada oculta":" descartadas ocultas");
-      if(!items.length)main.innerHTML='<div class="empty"><strong>Estoque vazio</strong>Toque em Novo item para cadastrar a primeira placa, tela ou carcaça, com foto e o que ela tem.</div>';
+      if(!items.length)main.innerHTML='<div class="empty"><strong>Estoque vazio</strong>Toque em Novo item para cadastrar a primeira placa, tela ou carcaça, com foto e o que ela tem.<br><br><button class="btn" type="button" data-act="backup">Já usava o app? Restaurar um backup</button></div>';
       else if(!list.length)main.innerHTML='<div class="empty"><strong>Nada encontrado</strong>Tire algum filtro ou busque por outra palavra.</div>';
       else main.innerHTML='<div class="grid">'+list.map(itemCard).join("")+'</div>';
     }else{
@@ -413,6 +573,7 @@ textarea.in{min-height:90px;resize:vertical}
     if(stack.length&&!sheetD.hidden)fillDetail();
   }
   main.addEventListener("click",function(e){
+    if(e.target.closest("[data-act=backup]")){openBackup();return;}
     var c=e.target.closest("[data-iid]"); if(c){pushDetail("item",c.dataset.iid);return;}
     var a=e.target.closest("[data-aid]"); if(a)pushDetail("adapt",a.dataset.aid);
   });
@@ -498,14 +659,14 @@ textarea.in{min-height:90px;resize:vertical}
     $("#dEdit").onclick=function(){openItemForm(it);};
     $("#dNewAd").onclick=function(){openAdaptForm(null,it);};
     function mexer(delta){
-      var novo=Math.max(0,qt+delta); if(novo===qt)return;
-      var c=Object.assign({},it); c.qtd=novo; c.atualizado=Date.now();
-      putIt("itens",c).then(loadAll).then(render).catch(function(){toast("Não consegui mudar a quantidade.");});
+      $("#qMinus").disabled=true; $("#qPlus").disabled=true;
+      update("itens",it.id,function(c){ c.qtd=Math.max(0,(c.qtd==null?1:c.qtd)+delta); c.atualizado=Date.now(); return c; })
+        .then(mudou).then(loadAll).then(render).catch(function(){toast("Não consegui mudar a quantidade.");render();});
     }
     $("#qMinus").onclick=function(){mexer(-1);};
     $("#qPlus").onclick=function(){mexer(1);};
     armDelete($("#dDel"),function(done){
-      delIt("itens",it.id).then(loadAll).then(function(){popDetail();render();toast("Item excluído");})
+      apagar("item",it).then(loadAll).then(function(){popDetail();render();toast("Item na lixeira. Para recuperar: Backup > Itens apagados");})
         .catch(function(){done();toast("Não consegui excluir. Tente de novo.");});
     });
   }
@@ -530,7 +691,7 @@ textarea.in{min-height:90px;resize:vertical}
     $("#dBack").onclick=popDetail;
     $("#dEdit").onclick=function(){openAdaptForm(a,null);};
     armDelete($("#dDel"),function(done){
-      delIt("adapt",a.id).then(loadAll).then(function(){popDetail();render();toast("Adaptação excluída");})
+      apagar("adapt",a).then(loadAll).then(function(){popDetail();render();toast("Adaptação na lixeira. Para recuperar: Backup > Itens apagados");})
         .catch(function(){done();toast("Não consegui excluir. Tente de novo.");});
     });
   }
@@ -545,36 +706,61 @@ textarea.in{min-height:90px;resize:vertical}
   /* ---------- formulários ---------- */
   var CAM='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-2h6l2 2h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>';
   function opts(list,sel,empty){return (empty?'<option value="">'+esc(empty)+'</option>':'')+list.map(function(v){return '<option value="'+esc(v)+'"'+(v===sel?' selected':'')+'>'+esc(v)+'</option>';}).join("");}
+
+  /* rascunho: tudo que voce digita fica guardado; se o celular fechar o app (acontece ao abrir a camera) nada se perde */
+  var draftTimer=null, cancelTimer=null;
+  function marcarForm(){ if(curForm){curForm.dirty=true; clearTimeout(draftTimer); draftTimer=setTimeout(salvarRascunhoJa,700);} }
+  function salvarRascunhoJa(){
+    clearTimeout(draftTimer);
+    if(!curForm||!curForm.dirty||!dbh)return Promise.resolve();
+    var d;
+    try{ d={kind:curForm.kind,editId:curForm.editId,data:curForm.build(),t:Date.now()}; }catch(e){ return Promise.resolve(); }
+    return metaSet("rascunho",d).catch(function(){});
+  }
+  function limparRascunho(){ clearTimeout(draftTimer); if(meta.rascunho)return metaDel("rascunho").catch(function(){}); return Promise.resolve(); }
+  sheetF.addEventListener("input",marcarForm);
+  sheetF.addEventListener("change",marcarForm);
+  function cancelarForm(){
+    if(!curForm)return;
+    if(curForm.dirty&&!curForm.armado){
+      curForm.armado=true;
+      toast("Você mexeu neste cadastro. Toque em Cancelar de novo para descartar.");
+      clearTimeout(cancelTimer); cancelTimer=setTimeout(function(){if(curForm)curForm.armado=false;},4000);
+      return;
+    }
+    limparRascunho(); curForm.close();
+  }
+  function temRascunhoPendente(){
+    if(meta.rascunho){ toast("Tem um cadastro sem salvar na tela inicial. Continue ou descarte antes."); closeDetail(); sheetB.hidden=true; renderAvisos(); return true; }
+    return false;
+  }
+
   function fieldPhotos(st){
     var box=$("#fFotos"), file=$("#fFile"), save=$("#fSave");
     function draw(){
       st.urls.forEach(function(u){URL.revokeObjectURL(u);}); st.urls=[];
       box.innerHTML=st.fotos.map(function(b,i){var u=URL.createObjectURL(b);st.urls.push(u);return '<div class="foto"><img alt="" src="'+u+'"><button type="button" data-rm="'+i+'" aria-label="Remover foto">×</button></div>';}).join("")
         +'<button type="button" class="addfoto" id="fAdd">'+CAM+(st.busy?'Salvando…':'Foto')+'</button>';
-      var add=$("#fAdd"); add.disabled=st.busy>0; add.onclick=function(){file.click();};
-      save.disabled=st.busy>0;
+      var add=box.querySelector("#fAdd"); if(add){add.disabled=st.busy>0; add.onclick=function(){file.click();};}
+      if(save)save.disabled=st.busy>0;
     }
-    box.addEventListener("click",function(e){var r=e.target.closest("[data-rm]"); if(!r)return; st.fotos.splice(Number(r.dataset.rm),1); draw();});
+    box.addEventListener("click",function(e){var r=e.target.closest("[data-rm]"); if(!r)return; st.fotos.splice(Number(r.dataset.rm),1); draw(); marcarForm();});
     file.addEventListener("change",function(){
       var files=Array.prototype.slice.call(file.files||[]); file.value="";
       if(!files.length)return;
       st.busy++; draw();
-      files.reduce(function(p,f){return p.then(function(){return prep(f).then(function(b){st.fotos.push(b);draw();});});},Promise.resolve())
+      files.reduce(function(p,f){return p.then(function(){return prep(f).then(function(b){st.fotos.push(b);draw();marcarForm();});});},Promise.resolve())
         .catch(function(){toast("Não consegui usar essa foto.");})
         .then(function(){st.busy--;draw();});
     });
     draw();
   }
-  function closeForm(st){ st.urls.forEach(function(u){URL.revokeObjectURL(u);}); sheetF.hidden=true; sheetF.innerHTML=""; curForm=null; }
+  function closeForm(st){ st.urls.forEach(function(u){URL.revokeObjectURL(u);}); sheetF.hidden=true; sheetF.innerHTML=""; curForm=null; clearTimeout(draftTimer); }
   var PHOTO_BOX='<div><div class="fotos" id="fFotos"></div><input type="file" id="fFile" accept="image/*" multiple hidden></div>';
 
-  function nextCod(tipo){
-    var p=tipoInfo(tipo).p, max=0, re=new RegExp("^"+p+"-(\\d+)$");
-    items.forEach(function(i){var m=re.exec(i.cod||"");if(m)max=Math.max(max,parseInt(m[1],10));});
-    return p+"-"+String(max+1).padStart(4,"0");
-  }
-  function openItemForm(it){
-    var d=it||{tipo:fTipo||"Placa principal",estado:"func",fotos:[],qtd:1,fonte:"",cond:"Usada",tem:[]};
+  function openItemForm(it,draft){
+    if(!draft&&temRascunhoPendente())return;
+    var d=draft?draft.data:(it||{tipo:fTipo||"Placa principal",estado:"func",fotos:[],qtd:1,fonte:"",cond:"Usada",tem:[]});
     var st={fotos:(d.fotos||[]).slice(),busy:0,urls:[]};
     var tem=(d.tem||[]).slice();
     sheetF.innerHTML=
@@ -609,23 +795,11 @@ textarea.in{min-height:90px;resize:vertical}
       +'</div>';
     sheetF.hidden=false; sheetF.scrollTop=0;
     fieldPhotos(st);
-    curForm={close:function(){closeForm(st);}};
-    function sync(){ var t=$("#fTipo").value; $("#fFonteWrap").hidden=(t!=="Placa principal"); $("#fTemWrap").hidden=(t!=="TV completa"); }
-    $("#fTipo").onchange=sync; sync();
-    $("#fTem").addEventListener("click",function(e){
-      var b=e.target.closest("[data-tem]"); if(!b)return;
-      var v=b.dataset.tem, i=tem.indexOf(v);
-      if(i>=0)tem.splice(i,1); else tem.push(v);
-      b.setAttribute("aria-pressed",i>=0?"false":"true");
-    });
-    $("#fCancel").onclick=function(){closeForm(st);};
-    $("#fSave").onclick=function(){
-      var nome=$("#fNome").value.trim(), save=$("#fSave");
-      if(!nome){toast("Escreva o nome ou a descrição do item.");$("#fNome").focus();return;}
-      var now=Date.now(), tipo=$("#fTipo").value, qv=parseInt($("#fQtd").value,10);
-      var data={
-        id:it?it.id:newId(), cod:it?it.cod:nextCod(tipo),
-        tipo:tipo, estado:$("#fEstado").value, nome:nome,
+    function build(){
+      var tipo=$("#fTipo").value, qv=parseInt($("#fQtd").value,10), now=Date.now();
+      return {
+        id:it?it.id:"", cod:it?it.cod:"",
+        tipo:tipo, estado:$("#fEstado").value, nome:$("#fNome").value.trim(),
         marca:$("#fMarca").value.trim(), modelo:$("#fModelo").value.trim(), codigo:$("#fCodigo").value.trim(),
         cond:$("#fCond").value, polegadas:$("#fPol").value.trim(),
         fonte:(tipo==="Placa principal")?$("#fFonte").value:"",
@@ -638,14 +812,36 @@ textarea.in{min-height:90px;resize:vertical}
         obs:$("#fObs").value.trim(),
         fotos:st.fotos.slice(), criado:(it&&it.criado)||now, atualizado:now
       };
+    }
+    curForm={kind:"item",editId:it?it.id:"",build:build,dirty:!!draft,armado:false,close:function(){closeForm(st);}};
+    function sync(){ var t=$("#fTipo").value; $("#fFonteWrap").hidden=(t!=="Placa principal"); $("#fTemWrap").hidden=(t!=="TV completa"); }
+    $("#fTipo").onchange=sync; sync();
+    $("#fTem").addEventListener("click",function(e){
+      var b=e.target.closest("[data-tem]"); if(!b)return;
+      var v=b.dataset.tem, i=tem.indexOf(v);
+      if(i>=0)tem.splice(i,1); else tem.push(v);
+      b.setAttribute("aria-pressed",i>=0?"false":"true");
+      marcarForm();
+    });
+    $("#fCancel").onclick=cancelarForm;
+    $("#fSave").onclick=function(){
+      var save=$("#fSave");
+      if(!$("#fNome").value.trim()){toast("Escreva o nome ou a descrição do item.");$("#fNome").focus();return;}
+      if(st.busy){toast("Espere a foto terminar de salvar.");return;}
+      var data=build();
+      data.id=it?it.id:newId();
+      if(!data.cod)data.cod=nextCod(data.tipo);
       save.disabled=true;
-      putIt("itens",data).then(loadAll).then(function(){closeForm(st);render();toast("Salvo: "+data.cod);})
+      putIt("itens",data).then(function(){return metaSet("seq",seq);}).then(mudou).then(loadAll)
+        .then(function(){return limparRascunho();})
+        .then(function(){closeForm(st);render();toast("Salvo: "+data.cod);})
         .catch(function(){save.disabled=false;toast("Não consegui salvar. O celular pode estar sem espaço.");});
     };
   }
 
-  function openAdaptForm(a,presetItem){
-    var d=a||{resultado:"certo",fotos:[],placaId:presetItem?presetItem.id:"",placaTxt:presetItem?(presetItem.cod+" · "+presetItem.nome):""};
+  function openAdaptForm(a,presetItem,draft){
+    if(!draft&&temRascunhoPendente())return;
+    var d=draft?draft.data:(a||{resultado:"certo",fotos:[],placaId:presetItem?presetItem.id:"",placaTxt:presetItem?(presetItem.cod+" · "+presetItem.nome):""});
     var st={fotos:(d.fotos||[]).slice(),busy:0,urls:[]};
     var lista=items.slice().sort(function(x,y){return (x.cod||"").localeCompare(y.cod||"");});
     sheetF.innerHTML=
@@ -663,84 +859,258 @@ textarea.in{min-height:90px;resize:vertical}
       +'</div>';
     sheetF.hidden=false; sheetF.scrollTop=0;
     fieldPhotos(st);
-    curForm={close:function(){closeForm(st);}};
-    $("#fPlaca").onchange=function(){
-      var id=this.value, i=items.filter(function(x){return x.id===id;})[0];
-      if(i)$("#fPlacaTxt").value=i.cod+" · "+i.nome;
-    };
-    $("#fCancel").onclick=function(){closeForm(st);};
-    $("#fSave").onclick=function(){
-      var modelo=$("#fModelo").value.trim(), save=$("#fSave");
-      if(!modelo){toast("Escreva o modelo da TV que recebeu a placa.");$("#fModelo").focus();return;}
+    function build(){
       var now=Date.now();
-      var data={
-        id:a?a.id:newId(), modelo:modelo, marca:$("#fMarca").value.trim(), resultado:$("#fRes").value,
+      return {
+        id:a?a.id:"", modelo:$("#fModelo").value.trim(), marca:$("#fMarca").value.trim(), resultado:$("#fRes").value,
         placaId:$("#fPlaca").value, placaTxt:$("#fPlacaTxt").value.trim(),
         alterei:$("#fAlterei").value.trim(), procedimento:$("#fProc").value.trim(), obs:$("#fObs").value.trim(),
         fotos:st.fotos.slice(), data:(a&&a.data)||now, atualizado:now
       };
+    }
+    curForm={kind:"adapt",editId:a?a.id:"",build:build,dirty:!!draft,armado:false,close:function(){closeForm(st);}};
+    $("#fPlaca").onchange=function(){
+      var id=this.value, i=items.filter(function(x){return x.id===id;})[0];
+      if(i)$("#fPlacaTxt").value=i.cod+" · "+i.nome;
+    };
+    $("#fCancel").onclick=cancelarForm;
+    $("#fSave").onclick=function(){
+      var save=$("#fSave");
+      if(!$("#fModelo").value.trim()){toast("Escreva o modelo da TV que recebeu a placa.");$("#fModelo").focus();return;}
+      if(st.busy){toast("Espere a foto terminar de salvar.");return;}
+      var data=build(); data.id=a?a.id:newId();
       save.disabled=true;
-      putIt("adapt",data).then(loadAll).then(function(){closeForm(st);render();toast("Adaptação salva");})
+      putIt("adapt",data).then(mudou).then(loadAll)
+        .then(function(){return limparRascunho();})
+        .then(function(){closeForm(st);render();toast("Adaptação salva");})
         .catch(function(){save.disabled=false;toast("Não consegui salvar. O celular pode estar sem espaço.");});
     };
   }
+  function retomarRascunho(){
+    var r=meta.rascunho; if(!r||!r.data)return;
+    if(r.kind==="item"){
+      var it=r.editId?items.filter(function(x){return x.id===r.editId;})[0]:null;
+      openItemForm(it||null,r);
+    }else{
+      var a=r.editId?adapt.filter(function(x){return x.id===r.editId;})[0]:null;
+      openAdaptForm(a||null,null,r);
+    }
+  }
   $("#fab").onclick=function(){ if(tab==="estoque")openItemForm(null); else openAdaptForm(null,null); };
 
+  /* ---------- avisos no topo ---------- */
+  function renderAvisos(){
+    var h="", n=items.length+adapt.length;
+    if(meta.rascunho&&!curForm){
+      h+='<div class="aviso"><p><b>Tem um cadastro que você não salvou.</b> O que você digitou ficou guardado.</p><div class="row"><button class="btn primary" type="button" data-act="draftGo">Continuar</button><button class="btn" type="button" data-act="draftDel">Descartar</button></div></div>';
+    }
+    if(n){
+      if(temAuto()){
+        var ref=meta.ultimoAuto||meta.criadoEm||Date.now();
+        if(meta.sujo&&Date.now()-ref>2*DIA){
+          h+='<div class="aviso"><p><b>A cópia automática não está funcionando.</b> Seus dados estão só neste celular. Gere um backup agora.</p><div class="row"><button class="btn primary" type="button" data-act="backup">Abrir backup</button></div></div>';
+        }
+      }else{
+        var ult=meta.ultimoManual||0;
+        if(!ult||Date.now()-ult>7*DIA){
+          h+='<div class="aviso"><p><b>Faz tempo que você não faz backup.</b> Os dados ficam só neste aparelho.</p><div class="row"><button class="btn primary" type="button" data-act="backup">Fazer backup</button></div></div>';
+        }
+      }
+    }
+    $("#avisos").innerHTML=h;
+  }
+  $("#avisos").addEventListener("click",function(e){
+    var b=e.target.closest("[data-act]"); if(!b)return;
+    var a=b.dataset.act;
+    if(a==="backup")openBackup();
+    else if(a==="draftGo")retomarRascunho();
+    else if(a==="draftDel"){ limparRascunho().then(function(){renderAvisos();toast("Rascunho descartado");}); }
+  });
+
   /* ---------- backup ---------- */
-  function blobToData(b){return new Promise(function(res,rej){var r=new FileReader();r.onload=function(){res(r.result);};r.onerror=function(){rej(r.error);};r.readAsDataURL(b);});}
-  function dataToBlob(u){return fetch(u).then(function(r){return r.blob();});}
-  function packList(list){
-    return Promise.all(list.map(function(o){
-      return Promise.all((o.fotos||[]).map(blobToData)).then(function(f){var c=Object.assign({},o);c.fotos=f;return c;});
-    }));
+  function quando(t){
+    if(!t)return "nunca";
+    var dias=Math.floor((Date.now()-t)/DIA), d=new Date(t), p=function(n){return String(n).padStart(2,"0");};
+    return (dias<=0?"hoje":dias===1?"ontem":"há "+dias+" dias")+" às "+p(d.getHours())+":"+p(d.getMinutes());
   }
-  function unpackList(store,list){
-    return (list||[]).reduce(function(p,o){
-      return p.then(function(){return Promise.all((o.fotos||[]).map(dataToBlob)).then(function(bl){o.fotos=bl;return putIt(store,o);});});
-    },Promise.resolve());
+  function exportManual(){
+    var nome="catalogo-zero-"+stamp()+".json";
+    if(window.AndroidBridge&&window.AndroidBridge.beginSave){
+      return Promise.resolve().then(function(){ window.AndroidBridge.beginSave(nome); return streamBackup(bw); })
+        .then(function(){ window.AndroidBridge.endSave(); })
+        .catch(function(e){ try{window.AndroidBridge.abortSave();}catch(x){} throw e; });
+    }
+    var parts=[];
+    return streamBackup(function(s){parts.push(s);}).then(function(){
+      var blob=new Blob(parts,{type:"application/json"});
+      var f=null; try{f=new File([blob],nome,{type:"application/json"});}catch(e){}
+      if(f&&navigator.canShare&&navigator.canShare({files:[f]})&&navigator.share){
+        return navigator.share({files:[f],title:"Backup do catálogo"}).catch(function(e){if(e&&e.name==="AbortError")return;throw e;});
+      }
+      var a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=nome;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function(){URL.revokeObjectURL(a.href);},10000);
+    });
   }
+
+  /* leitura do arquivo aos pedacos (arquivo grande nao estoura a memoria) */
+  function readLines(file,onLine){
+    var dec=new TextDecoder("utf-8"), pos=0, STEP=4*1024*1024, rest="";
+    function next(){
+      if(pos>=file.size){ rest+=dec.decode(); var ultima=rest; rest=""; return ultima?onLine(ultima):null; }
+      var end=Math.min(file.size,pos+STEP);
+      return file.slice(pos,end).arrayBuffer().then(function(buf){
+        pos=end;
+        rest+=dec.decode(buf,{stream:true});
+        var parts=rest.split("\n"); rest=parts.pop();
+        return parts.reduce(function(p,l){return p.then(function(){return l?onLine(l):null;});},Promise.resolve());
+      }).then(next);
+    }
+    return Promise.resolve(next());
+  }
+  function restaurar(file,progresso){
+    var st={ok:0,velho:0,ruim:0,fim:false,header:false,seq:null};
+    var idx={i:{},a:{},x:{}};
+    items.forEach(function(o){idx.i[o.id]=o;}); adapt.forEach(function(o){idx.a[o.id]=o;}); lixo.forEach(function(o){idx.x[o.id]=o;});
+    function fotosBlob(o){
+      return (o.fotos||[]).filter(function(u){return typeof u==="string"&&u.indexOf("data:")===0;}).map(dataToBlob);
+    }
+    function aplicar(s,o){
+      if(!o||typeof o.id!=="string"||!o.id){st.ruim++;return Promise.resolve();}
+      if(s==="x"){
+        if(!o.reg||typeof o.reg.id!=="string"||!o.reg.id||(o.tipo!=="item"&&o.tipo!=="adapt")){st.ruim++;return Promise.resolve();}
+        var vivo=(o.tipo==="item"?idx.i:idx.a)[o.reg.id];
+        if(vivo||idx.x[o.id]){st.velho++;return Promise.resolve();}
+        var rx=Object.assign({},o.reg); rx.fotos=fotosBlob(rx);
+        var ex={id:o.id,tipo:o.tipo,apagadoEm:o.apagadoEm||Date.now(),reg:rx};
+        return putIt("lixo",ex).then(function(){idx.x[o.id]=ex;st.ok++;});
+      }
+      if(s!=="i"&&s!=="a"){st.ruim++;return Promise.resolve();}
+      var store=(s==="i")?"itens":"adapt", atual=idx[s][o.id];
+      if(atual&&(atual.atualizado||0)>=(o.atualizado||0)){st.velho++;return Promise.resolve();}
+      var rec=Object.assign({},o); rec.fotos=fotosBlob(rec);
+      var kid=(s==="i"?"item":"adapt")+":"+o.id;
+      return tx([store,"lixo"],function(t){
+        t.objectStore(store).put(rec);
+        if(idx.x[kid])t.objectStore("lixo")["delete"](kid);
+      }).then(function(){ idx[s][o.id]=rec; delete idx.x[kid]; st.ok++; });
+    }
+    function onLine(l){
+      var r; try{ r=JSON.parse(l); }catch(e){ st.ruim++; return null; }
+      if(!r||typeof r!=="object")return null;
+      if(!st.header){
+        if(r.app==="catalogo-zero"){ st.header=true; st.seq=r.seq||null; return null; }
+        throw new Error("formato");
+      }
+      if(r.fim){ st.fim=true; return null; }
+      var p=aplicar(r.s,r.o);
+      return p.then(function(){ if(progresso&&((st.ok+st.velho)%10===0))progresso(st.ok+st.velho); });
+    }
+    function velho(txt){
+      var o=JSON.parse(txt);
+      if(!o||o.app!=="catalogo-zero"||!Array.isArray(o.itens))throw new Error("formato");
+      st.header=true; st.fim=true;
+      var seqLista=[];
+      (o.itens||[]).forEach(function(x){seqLista.push(["i",x]);});
+      (o.adaptacoes||[]).forEach(function(x){seqLista.push(["a",x]);});
+      return seqLista.reduce(function(p,par){return p.then(function(){return aplicar(par[0],par[1]);});},Promise.resolve());
+    }
+    return file.slice(0,300).text().then(function(head){
+      var m=/^\s*\{"app":"catalogo-zero","versao":(\d+)/.exec(head);
+      if(!m)throw new Error("formato");
+      if(parseInt(m[1],10)>=2)return readLines(file,onLine);
+      return file.text().then(velho);
+    }).then(function(){
+      if(!st.header)throw new Error("formato");
+      var m2=Object.assign({},meta.seq||{});
+      if(st.seq)Object.keys(st.seq).forEach(function(k){ if(!(m2[k]>=st.seq[k]))m2[k]=st.seq[k]; });
+      return metaSet("seq",m2);
+    }).then(function(){ return st.ok?mudou():null; }).then(loadAll).then(function(){ return st; });
+  }
+
   function openBackup(){
+    sheetB.dataset.view="main";
+    var auto=temAuto(), n=items.length, na=adapt.length;
+    var estado;
+    if(auto){
+      estado=meta.ultimoAuto?"Última cópia automática: "+quando(meta.ultimoAuto)+".":"A primeira cópia automática é feita alguns segundos depois do primeiro cadastro.";
+      if(meta.autoErro)estado+=" Último erro: "+meta.autoErro+".";
+    }else{
+      estado=meta.ultimoManual?"Último backup: "+quando(meta.ultimoManual)+".":"Você ainda não fez backup neste aparelho.";
+    }
     sheetB.innerHTML=
       '<div class="sheet-bar"><button class="btn ghost" type="button" id="bBack">Voltar</button><h2>Backup</h2><span style="width:60px"></span></div>'
       +'<div class="sheet-in">'
-      +'<p class="note">Os itens, as adaptações e as fotos ficam guardados só neste celular. Se você limpar os dados do navegador ou do app, trocar de aparelho ou desinstalar o app, eles somem. Faça o backup de vez em quando e guarde o arquivo no WhatsApp, no Drive ou no computador.</p>'
-      +'<div class="box"><h3>Guardar backup</h3><p class="note">'+items.length+(items.length===1?" item":" itens")+' e '+adapt.length+(adapt.length===1?" adaptação":" adaptações")+'.</p><button class="btn primary" type="button" id="bExp">Gerar arquivo de backup</button></div>'
-      +'<div class="box"><h3>Restaurar backup</h3><p class="note">Escolha um arquivo de backup. O que estiver nele é somado ao que já existe aqui. Se um registro já existir, ele é atualizado.</p><button class="btn" type="button" id="bImp">Escolher arquivo</button><input type="file" id="bFile" accept=".json,application/json" hidden></div>'
+      +'<p class="note">'+(auto
+        ?'Seus dados ficam guardados neste celular. O app também salva uma cópia sozinho na pasta <b>Downloads/CatalogoZero</b> (guarda as últimas 10 datas). Essa cópia continua lá mesmo se você desinstalar o app ou trocar de celular (leve o arquivo junto).'
+        :'Os itens, as adaptações e as fotos ficam guardados só neste aparelho. Se você limpar os dados do navegador, trocar de aparelho ou desinstalar, eles somem. Faça backup de vez em quando e guarde o arquivo no WhatsApp, no Drive ou no computador.')+'</p>'
+      +'<div class="box"><h3>Guardar backup</h3><p class="note" id="bEstado">'+esc(estado)+'<br>Agora: '+n+(n===1?" item":" itens")+' e '+na+(na===1?" adaptação":" adaptações")+'.</p>'
+      +(auto?'<button class="btn primary" type="button" id="bAuto">Salvar cópia agora em Downloads</button>':'')
+      +'<button class="btn'+(auto?'':' primary')+'" type="button" id="bExp">'+(auto?'Enviar arquivo de backup (WhatsApp, Drive…)':'Gerar arquivo de backup')+'</button></div>'
+      +'<div class="box"><h3>Restaurar backup</h3><p class="note">Escolha um arquivo de backup. Ele é somado ao que já existe aqui: o que você já tem nunca é apagado, e um registro só é trocado se o do arquivo for mais novo.</p><button class="btn" type="button" id="bImp">Escolher arquivo</button><input type="file" id="bFile" accept=".json,application/json,text/plain" hidden><p class="note" id="bMsg" role="status"></p></div>'
+      +'<div class="box"><h3>Itens apagados ('+lixo.length+')</h3><p class="note">Tudo que você exclui vai para cá e fica 90 dias. Dá para recuperar.</p><button class="btn" type="button" id="bLixo">Ver itens apagados</button></div>'
+      +'<p class="note" id="bUso">Catálogo Zero versão '+VERSAO+'</p>'
       +'</div>';
     sheetB.hidden=false; sheetB.scrollTop=0;
+    try{ if(navigator.storage&&navigator.storage.estimate)navigator.storage.estimate().then(function(e){ var el=$("#bUso"); if(el&&e&&e.usage)el.textContent="Catálogo Zero versão "+VERSAO+" · espaço usado: "+(e.usage/1048576).toFixed(1).replace(".",",")+" MB"; }).catch(function(){}); }catch(e){}
     $("#bBack").onclick=function(){sheetB.hidden=true;sheetB.innerHTML="";};
+    $("#bLixo").onclick=openLixo;
+    var ba=$("#bAuto");
+    if(ba)ba.onclick=function(){
+      if(!items.length&&!adapt.length&&!lixo.length){toast("Ainda não há nada para salvar.");return;}
+      ba.disabled=true; ba.textContent="Salvando…";
+      rodarAuto(true).then(function(ok){ toast(ok?"Cópia salva em Downloads/CatalogoZero":"Não consegui salvar a cópia. Use Enviar arquivo de backup."); if(!sheetB.hidden&&sheetB.dataset.view==="main")openBackup(); });
+    };
     $("#bExp").onclick=function(){
-      var btn=$("#bExp"); btn.disabled=true; btn.textContent="Gerando…";
-      Promise.all([packList(items),packList(adapt)]).then(function(r){
-        var json=JSON.stringify({app:"catalogo-zero",versao:1,exportado:new Date().toISOString(),itens:r[0],adaptacoes:r[1]});
-        var nome="catalogo-zero-"+new Date().toISOString().slice(0,10)+".json";
-        if(window.AndroidBridge&&window.AndroidBridge.beginSave){
-          window.AndroidBridge.beginSave(nome);
-          for(var i=0;i<json.length;){ var e=Math.min(json.length,i+400000); var cc=json.charCodeAt(e-1); if(e<json.length&&cc>=0xD800&&cc<=0xDBFF)e++; window.AndroidBridge.chunk(json.slice(i,e)); i=e; }
-          window.AndroidBridge.endSave();
-          return;
-        }
-        var blob=new Blob([json],{type:"application/json"});
-        var f=null; try{f=new File([blob],nome,{type:"application/json"});}catch(e){}
-        if(f&&navigator.canShare&&navigator.canShare({files:[f]})&&navigator.share){
-          return navigator.share({files:[f],title:"Backup do catálogo"}).catch(function(e){if(e&&e.name==="AbortError")return;throw e;});
-        }
-        var a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=nome;
-        document.body.appendChild(a); a.click(); a.remove();
-        setTimeout(function(){URL.revokeObjectURL(a.href);},10000);
-      }).then(function(){toast("Backup gerado");})
+      var btn=$("#bExp"), txt=btn.textContent; btn.disabled=true; btn.textContent="Gerando…";
+      exportManual().then(function(){ metaSet("ultimoManual",Date.now()).catch(function(){}); toast("Backup gerado"); })
         .catch(function(){toast("Não consegui gerar o backup.");})
-        .then(function(){btn.disabled=false;btn.textContent="Gerar arquivo de backup";});
+        .then(function(){btn.disabled=false;btn.textContent=txt;});
     };
     $("#bImp").onclick=function(){$("#bFile").click();};
     $("#bFile").addEventListener("change",function(){
       var f=this.files&&this.files[0]; this.value=""; if(!f)return;
-      f.text().then(function(txt){
-        var o=JSON.parse(txt);
-        if(!o||o.app!=="catalogo-zero"||!Array.isArray(o.itens))throw new Error("formato");
-        return unpackList("itens",o.itens).then(function(){return unpackList("adapt",o.adaptacoes);}).then(function(){return (o.itens.length)+((o.adaptacoes||[]).length);});
-      }).then(function(n){return loadAll().then(function(){render();toast(n+(n===1?" registro restaurado":" registros restaurados"));});})
-        .catch(function(){toast("Esse arquivo não é um backup do catálogo.");});
+      var msg=$("#bMsg"), bi=$("#bImp"); bi.disabled=true; msg.textContent="Lendo o arquivo…";
+      restaurar(f,function(k){ msg.textContent="Restaurando… "+k+" registros"; }).then(function(st){
+        var t=st.ok+(st.ok===1?" registro restaurado":" registros restaurados");
+        if(st.velho)t+=", "+st.velho+" já estavam atualizados aqui";
+        if(st.ruim)t+=", "+st.ruim+" ignorados (com defeito)";
+        if(!st.fim)t+=". ATENÇÃO: o arquivo está incompleto (foi cortado). Use um backup mais recente se tiver.";
+        render();
+        var m2=$("#bMsg"); if(m2)m2.textContent=t;
+        toast(st.ok+(st.ok===1?" registro restaurado":" registros restaurados"));
+      }).catch(function(e){
+        var m3=$("#bMsg"); if(m3)m3.textContent=(e&&e.message==="formato")?"Esse arquivo não é um backup do catálogo.":"Não consegui restaurar. O que já estava aqui continua intacto.";
+        loadAll().then(render).catch(function(){});
+      }).then(function(){var b2=$("#bImp"); if(b2)b2.disabled=false;});
+    });
+  }
+  function openLixo(){
+    sheetB.dataset.view="lixo";
+    var lista=lixo.slice().sort(function(a,b){return (b.apagadoEm||0)-(a.apagadoEm||0);});
+    sheetB.innerHTML=
+      '<div class="sheet-bar"><button class="btn ghost" type="button" id="bBack">Voltar</button><h2>Itens apagados</h2><span style="width:60px"></span></div>'
+      +'<div class="sheet-in">'
+      +(lista.length?lista.map(function(e){
+        var r=e.reg||{}, nome=(e.tipo==="item")?((r.cod||"")+" · "+(r.nome||"")):("Adaptação · "+(r.modelo||""));
+        return '<div class="box"><div class="cod">'+(e.tipo==="item"?esc(r.tipo||"Item"):"Adaptação")+'</div><div class="cname">'+esc(nome)+'</div><p class="note">Apagado '+esc(quando(e.apagadoEm))+'</p>'
+          +'<div class="row"><button class="btn primary" type="button" data-rec="'+esc(e.id)+'">Recuperar</button><button class="btn danger" type="button" data-del="'+esc(e.id)+'" data-txt="Apagar de vez">Apagar de vez</button></div></div>';
+      }).join(""):'<div class="empty"><strong>Lixeira vazia</strong>O que você excluir aparece aqui por 90 dias.</div>')
+      +'</div>';
+    sheetB.hidden=false; sheetB.scrollTop=0;
+    $("#bBack").onclick=openBackup;
+    sheetB.querySelectorAll("[data-rec]").forEach(function(b){
+      b.onclick=function(){
+        var e=lixo.filter(function(x){return x.id===b.dataset.rec;})[0]; if(!e)return;
+        b.disabled=true;
+        recuperar(e).then(loadAll).then(function(){render();openLixo();toast("Recuperado");}).catch(function(){b.disabled=false;toast("Não consegui recuperar.");});
+      };
+    });
+    sheetB.querySelectorAll("[data-del]").forEach(function(b){
+      armDelete(b,function(done){
+        var e=lixo.filter(function(x){return x.id===b.dataset.del;})[0]; if(!e){done();return;}
+        apagarDeVez(e).then(loadAll).then(function(){openLixo();toast("Apagado de vez");}).catch(function(){done();toast("Não consegui apagar.");});
+      });
     });
   }
   $("#btnBackup").onclick=openBackup;
@@ -751,13 +1121,30 @@ textarea.in{min-height:90px;resize:vertical}
     if(ios&&!navigator.standalone&&!localStorage.getItem("dica-zero"))$("#dica").hidden=false;
     $("#dicaX").onclick=function(){$("#dica").hidden=true;try{localStorage.setItem("dica-zero","1");}catch(e){}};
   }catch(e){}
-  openDb().then(function(h){dbh=h;return loadAll();}).then(function(){render();})
-    .catch(function(){main.innerHTML='<div class="empty"><strong>Sem armazenamento</strong>O navegador não deixou guardar dados. Saia do modo privado e abra de novo.</div>';});
+  var lastErr=0;
+  function erroGeral(){ if(Date.now()-lastErr>5000){lastErr=Date.now();toast("Erro inesperado. Se repetir, gere um backup e avise.");} }
+  window.addEventListener("error",erroGeral);
+  window.addEventListener("unhandledrejection",erroGeral);
+  window.__autoDone=function(){};
+  openDb().then(function(h){dbh=h;return loadAll();}).then(function(){
+    var agora=Date.now(), velhos=lixo.filter(function(e){return (e.apagadoEm||0)<agora-90*DIA;});
+    var p=Promise.resolve();
+    if(!meta.criadoEm)p=p.then(function(){return metaSet("criadoEm",agora);});
+    velhos.forEach(function(e){ p=p.then(function(){return run("lixo","readwrite",function(s){return s["delete"](e.id);});}); });
+    return p.then(function(){return velhos.length?loadAll():null;});
+  }).then(function(){
+    render();
+    if(meta.sujo)agendarAuto(8000);
+  }).catch(function(){main.innerHTML='<div class="empty"><strong>Sem armazenamento</strong>O app não conseguiu abrir o banco de dados do celular. Feche o app e abra de novo. Se continuar, restaure o backup mais recente.</div>';});
   try{ if(navigator.storage&&navigator.storage.persist)navigator.storage.persist(); }catch(e){}
+  document.addEventListener("visibilitychange",function(){
+    if(document.visibilityState==="hidden"){ salvarRascunhoJa(); if(meta.sujo)agendarAuto(1500); }
+  });
+  window.addEventListener("pagehide",function(){ salvarRascunhoJa(); });
   window.__voltar=function(){
     if(!$("#zoom").hidden){$("#zoom").hidden=true;return true;}
-    if(!sheetF.hidden){ if(curForm){curForm.close();}else{sheetF.hidden=true;sheetF.innerHTML="";} return true; }
-    if(!sheetB.hidden){sheetB.hidden=true;sheetB.innerHTML="";return true;}
+    if(!sheetF.hidden){ if(curForm){cancelarForm();}else{sheetF.hidden=true;sheetF.innerHTML="";} return true; }
+    if(!sheetB.hidden){ if(sheetB.dataset.view==="lixo"){openBackup();}else{sheetB.hidden=true;sheetB.innerHTML="";} return true; }
     if(!sheetD.hidden){popDetail();return true;}
     return false;
   };

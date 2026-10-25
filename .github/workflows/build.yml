@@ -47,6 +47,85 @@ jobs:
           name: CatalogoZero-apk
           path: CatalogoZero.apk
 
+      - name: Guardar o registro do erro (so se falhar)
+        if: failure()
+        run: |
+          cp build.log /tmp/build.log || echo "sem log" > /tmp/build.log
+          git config user.name "actions"
+          git config user.email "actions@users.noreply.github.com"
+          git checkout --orphan catalogo-log
+          git rm -rf . > /dev/null 2>&1 || true
+          cp /tmp/build.log build.log
+          git add build.log
+          git commit -m "log do erro de compilacao"
+          git push -f origin catalogo-log
+
+  testar:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Baixar o codigo
+        uses: actions/checkout@v4
+
+      - name: Baixar o APK compilado
+        uses: actions/download-artifact@v4
+        with:
+          name: CatalogoZero-apk
+
+      - name: Liberar aceleracao do emulador (KVM)
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Testar no Android virtual
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          ram-size: 3072M
+          heap-size: 512M
+          disk-size: 4096M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          script: bash teste/rodar_emulador.sh
+
+      - name: Guardar resultado do teste
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: resultado-do-teste
+          path: teste/saida
+
+      - name: Guardar o registro do teste (so se falhar)
+        if: failure()
+        run: |
+          git config user.name "actions"
+          git config user.email "actions@users.noreply.github.com"
+          mkdir -p /tmp/saida && cp -r teste/saida/* /tmp/saida/ 2>/dev/null || true
+          rm -f /tmp/saida/copia*.json
+          git checkout --orphan catalogo-log
+          git rm -rf . > /dev/null 2>&1 || true
+          mkdir -p teste-log && cp -r /tmp/saida/* teste-log/ 2>/dev/null || echo "sem saida" > teste-log/vazio.txt
+          git add teste-log
+          git commit -m "log do teste no emulador"
+          git push -f origin catalogo-log
+
+  publicar:
+    needs: [build, testar]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Baixar o codigo
+        uses: actions/checkout@v4
+
+      - name: Baixar o APK testado
+        uses: actions/download-artifact@v4
+        with:
+          name: CatalogoZero-apk
+
       - name: Apagar lancamentos antigos do Catalogo (o controle de TV nao e mexido)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -60,20 +139,7 @@ jobs:
         with:
           make_latest: "false"
           prerelease: true
-          tag_name: catalogo-v1.0.${{ github.run_number }}
+          tag_name: catalogo-v1.1.${{ github.run_number }}
           target_commitish: ${{ github.sha }}
-          name: Catálogo Zero v1.0.${{ github.run_number }}
+          name: Catálogo Zero v1.1 (build ${{ github.run_number }})
           files: CatalogoZero.apk
-
-      - name: Guardar o registro do erro (so se falhar)
-        if: failure()
-        run: |
-          cp build.log /tmp/build.log || echo "sem log" > /tmp/build.log
-          git config user.name "actions"
-          git config user.email "actions@users.noreply.github.com"
-          git checkout --orphan catalogo-log
-          git rm -rf . > /dev/null 2>&1 || true
-          cp /tmp/build.log build.log
-          git add build.log
-          git commit -m "log do erro de compilacao"
-          git push -f origin catalogo-log

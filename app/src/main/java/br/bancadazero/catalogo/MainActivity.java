@@ -1,12 +1,27 @@
 package br.bancadazero.catalogo;
 
+import android.Manifest;
 import android.app.Activity;
+import android.content.ContentResolver;
+import android.content.ContentUris;
+import android.content.ContentValues;
+import android.content.pm.PackageManager;
+import android.database.Cursor;
+import android.os.Build;
+import android.os.Environment;
+import android.provider.MediaStore;
+import android.view.ViewGroup;
+import android.webkit.RenderProcessGoneDetail;
+import org.json.JSONObject;
+import java.io.FileInputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.util.HashSet;
 import android.content.ClipData;
 import android.content.Intent;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
-import android.provider.MediaStore;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -40,10 +55,19 @@ public class MainActivity extends Activity {
 
     private FileOutputStream saidaBackup;
     private File arquivoBackup;
+    private String nomeAuto;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (getIntent() != null && getIntent().getBooleanExtra("depurar", false)) {
+            WebView.setWebContentsDebuggingEnabled(true);
+        }
+        limparCache();
+        if (Build.VERSION.SDK_INT < 29
+                && androidx.core.content.ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            androidx.core.app.ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, 7);
+        }
         getWindow().setStatusBarColor(Color.parseColor("#09090A"));
         getWindow().setNavigationBarColor(Color.parseColor("#09090A"));
 
@@ -65,6 +89,24 @@ public class MainActivity extends Activity {
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 return loader.shouldInterceptRequest(request.getUrl());
+            }
+
+            @Override
+            public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+                // o processo da pagina morreu (pouca memoria): reabre o app em vez de fechar de vez
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            ViewGroup pai = (ViewGroup) web.getParent();
+                            if (pai != null) pai.removeView(web);
+                            web.destroy();
+                        } catch (Exception ignorado) {
+                        }
+                        recreate();
+                    }
+                });
+                return true;
             }
 
             @Override
@@ -127,19 +169,28 @@ public class MainActivity extends Activity {
 
         web.addJavascriptInterface(new Ponte(), "AndroidBridge");
 
-        if (savedInstanceState != null) {
-            web.restoreState(savedInstanceState);
-        } else {
-            web.loadUrl(HOME);
-        }
+        web.loadUrl(HOME);
     }
 
-    @Override
-    protected void onSaveInstanceState(Bundle outState) {
-        super.onSaveInstanceState(outState);
-        if (web != null) {
-            web.saveState(outState);
-        }
+    /** Apaga fotos da camera e arquivos temporarios antigos do cache. */
+    private void limparCache() {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    long limite = System.currentTimeMillis() - 2L * 24 * 3600 * 1000;
+                    String[] pastas = {"fotos", "backup"};
+                    for (String nome : pastas) {
+                        File[] lista = new File(getCacheDir(), nome).listFiles();
+                        if (lista == null) continue;
+                        for (File f : lista) {
+                            if (f.lastModified() < limite) f.delete();
+                        }
+                    }
+                } catch (Exception ignorado) {
+                }
+            }
+        }).start();
     }
 
     @Override
@@ -200,6 +251,143 @@ public class MainActivity extends Activity {
         saidaBackup = null;
     }
 
+    private void responderAuto(final boolean ok, final String msg) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (web != null) {
+                    web.evaluateJavascript("window.__autoDone&&window.__autoDone(" + ok + "," + JSONObject.quote(msg) + ")", null);
+                }
+            }
+        });
+    }
+
+    /** Copia o backup para Downloads/CatalogoZero (continua la mesmo se o app for desinstalado). */
+    private String copiarParaDownloads(File origem, String nome) throws Exception {
+        if (Build.VERSION.SDK_INT >= 29) {
+            ContentResolver cr = getContentResolver();
+            ContentValues v = new ContentValues();
+            v.put(MediaStore.MediaColumns.DISPLAY_NAME, nome);
+            v.put(MediaStore.MediaColumns.MIME_TYPE, "application/json");
+            v.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/CatalogoZero");
+            v.put(MediaStore.MediaColumns.IS_PENDING, 1);
+            Uri uri = cr.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
+            if (uri == null) throw new Exception("sem acesso a Downloads");
+            try {
+                OutputStream out = cr.openOutputStream(uri);
+                InputStream in = new FileInputStream(origem);
+                try {
+                    byte[] buf = new byte[65536];
+                    int n;
+                    while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                    out.flush();
+                } finally {
+                    in.close();
+                    out.close();
+                }
+                ContentValues pronto = new ContentValues();
+                pronto.put(MediaStore.MediaColumns.IS_PENDING, 0);
+                cr.update(uri, pronto, null, null);
+                long gravado = -1;
+                Cursor c = cr.query(uri, new String[]{MediaStore.MediaColumns.SIZE}, null, null, null);
+                if (c != null) {
+                    try {
+                        if (c.moveToFirst()) gravado = c.getLong(0);
+                    } finally {
+                        c.close();
+                    }
+                }
+                if (gravado != origem.length()) throw new Exception("arquivo gravado incompleto");
+            } catch (Exception e) {
+                try {
+                    cr.delete(uri, null, null);
+                } catch (Exception ignorado) {
+                }
+                throw e;
+            }
+            podarDownloads(cr);
+            return "Downloads/CatalogoZero/" + nome;
+        }
+        if (androidx.core.content.ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            throw new Exception("sem permissão para gravar em Downloads");
+        }
+        File pasta = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "CatalogoZero");
+        if (!pasta.exists() && !pasta.mkdirs()) throw new Exception("não consegui criar a pasta");
+        File destino = new File(pasta, nome);
+        InputStream in = new FileInputStream(origem);
+        FileOutputStream out = new FileOutputStream(destino, false);
+        try {
+            byte[] buf = new byte[65536];
+            int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            out.flush();
+        } finally {
+            in.close();
+            out.close();
+        }
+        if (destino.length() != origem.length()) {
+            destino.delete();
+            throw new Exception("arquivo gravado incompleto");
+        }
+        File[] todos = pasta.listFiles();
+        if (todos != null) {
+            java.util.Arrays.sort(todos, new java.util.Comparator<File>() {
+                @Override
+                public int compare(File a, File b) {
+                    return b.getName().compareTo(a.getName());
+                }
+            });
+            HashSet<String> datas = new HashSet<String>();
+            for (File f : todos) {
+                String nm = f.getName();
+                if (!nm.startsWith("CatalogoZero-") || nm.length() < 23) continue;
+                String data = nm.substring(13, 23);
+                if (datas.contains(data) || datas.size() >= 10) {
+                    f.delete();
+                } else {
+                    datas.add(data);
+                }
+            }
+        }
+        return "Downloads/CatalogoZero/" + nome;
+    }
+
+    /** Guarda 1 copia por dia, das 10 datas mais recentes. So mexe nos arquivos que o proprio app criou. */
+    private void podarDownloads(ContentResolver cr) {
+        try {
+            Cursor c = cr.query(MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                    new String[]{MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME},
+                    MediaStore.MediaColumns.RELATIVE_PATH + " LIKE ? AND " + MediaStore.MediaColumns.DISPLAY_NAME + " LIKE ?",
+                    new String[]{Environment.DIRECTORY_DOWNLOADS + "/CatalogoZero%", "CatalogoZero-%.json"},
+                    MediaStore.MediaColumns.DISPLAY_NAME + " DESC");
+            if (c == null) return;
+            HashSet<String> datas = new HashSet<String>();
+            java.util.ArrayList<Long> apagar = new java.util.ArrayList<Long>();
+            try {
+                while (c.moveToNext()) {
+                    long id = c.getLong(0);
+                    String nm = c.getString(1);
+                    if (nm == null || nm.length() < 23) continue;
+                    String data = nm.substring(13, 23);
+                    if (datas.contains(data) || datas.size() >= 10) {
+                        apagar.add(id);
+                    } else {
+                        datas.add(data);
+                    }
+                }
+            } finally {
+                c.close();
+            }
+            for (Long id : apagar) {
+                try {
+                    cr.delete(ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, id), null, null);
+                } catch (Exception ignorado) {
+                }
+            }
+        } catch (Exception ignorado) {
+        }
+    }
+
     /** Ponte chamada pelo JavaScript da pagina (window.AndroidBridge). */
     private class Ponte {
 
@@ -216,6 +404,56 @@ public class MainActivity extends Activity {
                 saidaBackup = null;
                 aviso("Não consegui preparar o backup.");
             }
+        }
+
+        @JavascriptInterface
+        public void beginAuto(String nome) {
+            try {
+                fecharBackup();
+                File pasta = new File(getCacheDir(), "backup");
+                pasta.mkdirs();
+                nomeAuto = nome.replaceAll("[^A-Za-z0-9._-]", "_");
+                arquivoBackup = new File(pasta, "auto.tmp");
+                saidaBackup = new FileOutputStream(arquivoBackup, false);
+            } catch (Exception e) {
+                saidaBackup = null;
+                responderAuto(false, "não consegui preparar o arquivo");
+            }
+        }
+
+        @JavascriptInterface
+        public void endAuto() {
+            final File origem = arquivoBackup;
+            final String nome = nomeAuto;
+            try {
+                if (saidaBackup == null || origem == null) {
+                    responderAuto(false, "arquivo não preparado");
+                    return;
+                }
+                saidaBackup.close();
+                saidaBackup = null;
+            } catch (Exception e) {
+                responderAuto(false, "não consegui fechar o arquivo");
+                return;
+            }
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        String onde = copiarParaDownloads(origem, nome);
+                        origem.delete();
+                        responderAuto(true, onde);
+                    } catch (Exception e) {
+                        responderAuto(false, String.valueOf(e.getMessage()));
+                    }
+                }
+            }).start();
+        }
+
+        @JavascriptInterface
+        public void abortSave() {
+            fecharBackup();
+            if (arquivoBackup != null) arquivoBackup.delete();
         }
 
         @JavascriptInterface
